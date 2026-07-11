@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentDialog
+    x:Class="LinuxDo.Features.Auth.SiteChallengeDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="站点安全验证"
+    PrimaryButtonText="验证完成，继续"
+    SecondaryButtonText="稍后"
+    PrimaryButtonClick="Complete_Click"
+    SecondaryButtonClick="Dismiss_Click"
+    DefaultButton="Primary"
+    MinWidth="720">
+
+    <Grid MinHeight="460" MinWidth="640" RowSpacing="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <TextBlock
+            x:Name="MessageText"
+            TextWrapping="Wrap"
+            Opacity="0.8" />
+        <WebView2 x:Name="ChallengeWebView" Grid.Row="1" />
+        <TextBlock
+            Grid.Row="2"
+            x:Name="StatusText"
+            Opacity="0.85"
+            TextWrapping="Wrap" />
+    </Grid>
+</ContentDialog>

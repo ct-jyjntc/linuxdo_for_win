@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "LinuxDo (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "LinuxDo (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

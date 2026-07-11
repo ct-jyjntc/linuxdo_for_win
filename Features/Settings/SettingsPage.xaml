@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Page
+    x:Class="LinuxDo.Features.Settings.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer>
+        <StackPanel Padding="24,16" Spacing="8" MaxWidth="720" HorizontalAlignment="Left">
+            <TextBlock Style="{StaticResource SubtitleTextBlockStyle}" Text="设置" Margin="0,0,0,8" />
+
+            <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="外观" Margin="0,8,0,4" />
+            <ComboBox x:Name="AppearanceBox" Header="主题" Width="280" SelectionChanged="AppearanceBox_SelectionChanged">
+                <ComboBoxItem Content="跟随系统" Tag="System" />
+                <ComboBoxItem Content="浅色" Tag="Light" />
+                <ComboBoxItem Content="深色" Tag="Dark" />
+            </ComboBox>
+            <ComboBox x:Name="FontSizeBox" Header="正文字号" Width="280" SelectionChanged="FontSizeBox_SelectionChanged">
+                <ComboBoxItem Content="小" Tag="Small" />
+                <ComboBoxItem Content="中" Tag="Medium" />
+                <ComboBoxItem Content="大" Tag="Large" />
+                <ComboBoxItem Content="特大" Tag="XLarge" />
+            </ComboBox>
+            <ComboBox x:Name="DensityBox" Header="列表密度" Width="280" SelectionChanged="DensityBox_SelectionChanged">
+                <ComboBoxItem Content="紧凑" Tag="Compact" />
+                <ComboBoxItem Content="舒适" Tag="Comfortable" />
+                <ComboBoxItem Content="宽松" Tag="Roomy" />
+            </ComboBox>
+            <Slider x:Name="LineSpacingSlider" Header="阅读行距" Minimum="1.0" Maximum="1.8" StepFrequency="0.05" Width="280" ValueChanged="LineSpacingSlider_ValueChanged" />
+
+            <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="阅读" Margin="0,16,0,4" />
+            <ToggleSwitch x:Name="CollapseLongPostsSwitch" Header="折叠长帖" Toggled="CollapseLongPostsSwitch_Toggled" />
+            <ToggleSwitch x:Name="ClipboardSwitch" Header="识别剪贴板中的主题链接" Toggled="ClipboardSwitch_Toggled" />
+            <ToggleSwitch x:Name="LocalBadgesSwitch" Header="侧栏显示本地列表角标" Toggled="LocalBadgesSwitch_Toggled" />
+            <ToggleSwitch x:Name="NotifBannersSwitch" Header="系统通知横幅" Toggled="NotifBannersSwitch_Toggled" />
+            <ToggleSwitch x:Name="TrayIconSwitch" Header="显示托盘图标" Toggled="TrayIconSwitch_Toggled" />
+            <ToggleSwitch x:Name="AutosaveDraftsSwitch" Header="草稿自动云同步" Toggled="AutosaveDraftsSwitch_Toggled" />
+
+            <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="关键词过滤" Margin="0,16,0,4" />
+            <TextBox x:Name="KeywordsBox" Header="屏蔽标题关键词（逗号/换行分隔）" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="80" LostFocus="KeywordsBox_LostFocus" />
+
+            <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="站点" Margin="0,16,0,4" />
+            <TextBox x:Name="BaseUrlBox" Header="Base URL" LostFocus="BaseUrlBox_LostFocus" />
+            <Button Content="打开站点验证页" Click="Challenge_Click" Margin="0,4,0,0" />
+            <Button Content="清理 HTML 缓存" Click="ClearCache_Click" Margin="0,4,0,0" />
+
+            <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="快捷键" Margin="0,16,0,4" />
+            <TextBlock Opacity="0.7" TextWrapping="Wrap" FontSize="12"
+                       Text="点击右侧按钮后按下新组合键。修改立即生效并持久保存。" />
+            <ListView x:Name="ShortcutList" SelectionMode="None" MaxHeight="420">
+                <ListView.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Padding="0,6" ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock VerticalAlignment="Center" Text="{Binding Title}" />
+                            <Button Grid.Column="1" MinWidth="120" Click="ShortcutCapture_Click"
+                                    Tag="{Binding Action}" Content="{Binding Display}" />
+                            <Button Grid.Column="2" Content="重置" Click="ShortcutReset_Click"
+                                    Tag="{Binding Action}" />
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+            <Button Content="恢复全部默认快捷键" Click="ShortcutResetAll_Click" Margin="0,4,0,0" />
+            <TextBlock x:Name="ShortcutHintText" Opacity="0.7" TextWrapping="Wrap" />
+
+            <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="关于" Margin="0,16,0,4" />
+            <TextBlock Text="LinuxDo for Windows — 非官方客户端" Opacity="0.75" />
+            <TextBlock Text="基于 Discourse REST API · WinUI 3" Opacity="0.6" FontSize="12" />
+            <TextBlock x:Name="StatusText" Margin="0,8,0,0" Opacity="0.7" />
+        </StackPanel>
+    </ScrollViewer>
+</Page>

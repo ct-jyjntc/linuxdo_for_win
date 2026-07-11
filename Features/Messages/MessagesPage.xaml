@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Page
+    x:Class="LinuxDo.Features.Messages.MessagesPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:home="using:LinuxDo.Features.Home">
+
+    <Grid Padding="20,12" RowSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <Grid>
+            <TextBlock Style="{StaticResource SubtitleTextBlockStyle}" Text="私信" />
+            <Button HorizontalAlignment="Right" Content="写私信" Click="Compose_Click" />
+        </Grid>
+        <SelectorBar x:Name="MailboxBar" Grid.Row="1" SelectionChanged="MailboxBar_SelectionChanged">
+            <SelectorBarItem Text="收件箱" IsSelected="True" Tag="inbox" />
+            <SelectorBarItem Text="已发送" Tag="sent" />
+            <SelectorBarItem Text="归档" Tag="archive" />
+        </SelectorBar>
+        <Grid Grid.Row="2">
+            <ProgressRing x:Name="LoadingRing" Width="40" Height="40" HorizontalAlignment="Center" VerticalAlignment="Center" IsActive="False" Visibility="Collapsed" />
+            <ListView x:Name="TopicList" IsItemClickEnabled="True" ItemClick="TopicList_ItemClick">
+                <ListView.ItemTemplate>
+                    <DataTemplate x:DataType="home:TopicListItemViewModel">
+                        <Grid Padding="12,10" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="4">
+                                <TextBlock FontWeight="SemiBold" Text="{x:Bind DisplayTitle, Mode=OneWay}" TextWrapping="Wrap" />
+                                <TextBlock FontSize="12" Opacity="0.6" Text="{x:Bind Meta, Mode=OneWay}" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Content="{x:Bind ActionLabel, Mode=OneWay}"
+                                    Click="ArchiveAction_Click" Tag="{x:Bind}"
+                                    VerticalAlignment="Center" Style="{StaticResource SubtleButtonStyle}" />
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+            <TextBlock x:Name="EmptyText" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.6" Text="暂无私信" Visibility="Collapsed" />
+        </Grid>
+    </Grid>
+</Page>

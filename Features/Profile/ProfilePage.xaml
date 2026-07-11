@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Page
+    x:Class="LinuxDo.Features.Profile.ProfilePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:home="using:LinuxDo.Features.Home"
+    xmlns:controls="using:LinuxDo.Controls">
+
+    <ScrollViewer>
+        <StackPanel Padding="24,16" Spacing="16" MaxWidth="920" HorizontalAlignment="Left">
+            <ProgressRing x:Name="LoadingRing" Width="40" Height="40" HorizontalAlignment="Center" />
+
+            <Grid ColumnSpacing="16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Border Width="88" Height="88" CornerRadius="44" Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                    <controls:CachedImage x:Name="AvatarImage" Width="88" Height="88" Stretch="UniformToFill" />
+                </Border>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="4">
+                    <TextBlock x:Name="DisplayNameText" Style="{StaticResource SubtitleTextBlockStyle}" />
+                    <TextBlock x:Name="UsernameText" Opacity="0.7" />
+                    <TextBlock x:Name="TitleText" Opacity="0.6" FontSize="12" />
+                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+                        <Button x:Name="FollowButton" Content="关注" Click="Follow_Click" Visibility="Collapsed" />
+                        <Button x:Name="MessageButton" Content="私信" Click="Message_Click" Visibility="Collapsed" />
+                        <Button x:Name="MuteButton" Content="静音" Click="Mute_Click" Visibility="Collapsed" />
+                        <Button x:Name="IgnoreButton" Content="忽略" Click="Ignore_Click" Visibility="Collapsed" />
+                        <Button x:Name="FollowersButton" Content="粉丝" Click="Followers_Click" Visibility="Collapsed" />
+                        <Button x:Name="FollowingButton" Content="关注列表" Click="Following_Click" Visibility="Collapsed" />
+                        <Button x:Name="LogoutButton" Content="退出登录" Click="Logout_Click" Visibility="Collapsed" />
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+
+            <TextBlock x:Name="BioText" TextWrapping="Wrap" Opacity="0.85" />
+
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Border Padding="12" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                    <StackPanel>
+                        <TextBlock x:Name="TrustText" FontWeight="SemiBold" />
+                        <TextBlock FontSize="12" Opacity="0.6" Text="信任等级" />
+                    </StackPanel>
+                </Border>
+                <Border Grid.Column="1" Padding="12" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                    <StackPanel>
+                        <TextBlock x:Name="ViewsText" FontWeight="SemiBold" />
+                        <TextBlock FontSize="12" Opacity="0.6" Text="主页浏览" />
+                    </StackPanel>
+                </Border>
+                <Border Grid.Column="2" Padding="12" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                    <StackPanel>
+                        <TextBlock x:Name="FollowersText" FontWeight="SemiBold" />
+                        <TextBlock FontSize="12" Opacity="0.6" Text="粉丝" />
+                    </StackPanel>
+                </Border>
+                <Border Grid.Column="3" Padding="12" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                    <StackPanel>
+                        <TextBlock x:Name="FollowingText" FontWeight="SemiBold" />
+                        <TextBlock FontSize="12" Opacity="0.6" Text="关注" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <!-- Summary stats -->
+            <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="统计摘要" />
+            <Grid x:Name="SummaryGrid" ColumnSpacing="10" RowSpacing="10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Border Padding="10" CornerRadius="8" Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                    <StackPanel>
+                        <TextBlock x:Name="LikesGivenText" FontWeight="SemiBold" Text="—" />
+                        <TextBlock FontSize="11" Opacity="0.65" Text="给出的赞" />
+                    </StackPanel>
+                </Border>
+                <Border Grid.Column="1" Padding="10" CornerRadius="8" Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                    <StackPanel>
+                        <TextBlock x:Name="LikesReceivedText" FontWeight="SemiBold" Text="—" />
+                        <TextBlock FontSize="11" Opacity="0.65" Text="收到的赞" />
+                    </StackPanel>
+                </Border>
+                <Border Grid.Column="2" Padding="10" CornerRadius="8" Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                    <StackPanel>
+                        <TextBlock x:Name="TopicCountText" FontWeight="SemiBold" Text="—" />
+                        <TextBlock FontSize="11" Opacity="0.65" Text="主题数" />
+                    </StackPanel>
+                </Border>
+                <Border Grid.Column="3" Padding="10" CornerRadius="8" Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                    <StackPanel>
+                        <TextBlock x:Name="PostCountText" FontWeight="SemiBold" Text="—" />
+                        <TextBlock FontSize="11" Opacity="0.65" Text="帖子数" />
+                    </StackPanel>
+                </Border>
+                <Border Grid.Row="1" Padding="10" CornerRadius="8" Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                    <StackPanel>
+                        <TextBlock x:Name="DaysVisitedText" FontWeight="SemiBold" Text="—" />
+                        <TextBlock FontSize="11" Opacity="0.65" Text="访问天数" />
+                    </StackPanel>
+                </Border>
+                <Border Grid.Row="1" Grid.Column="1" Padding="10" CornerRadius="8" Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                    <StackPanel>
+                        <TextBlock x:Name="PostsReadText" FontWeight="SemiBold" Text="—" />
+                        <TextBlock FontSize="11" Opacity="0.65" Text="已读帖子" />
+                    </StackPanel>
+                </Border>
+                <Border Grid.Row="1" Grid.Column="2" Padding="10" CornerRadius="8" Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                    <StackPanel>
+                        <TextBlock x:Name="SolvedText" FontWeight="SemiBold" Text="—" />
+                        <TextBlock FontSize="11" Opacity="0.65" Text="已解决" />
+                    </StackPanel>
+                </Border>
+                <Border Grid.Row="1" Grid.Column="3" Padding="10" CornerRadius="8" Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                    <StackPanel>
+                        <TextBlock x:Name="BookmarkCountText" FontWeight="SemiBold" Text="—" />
+                        <TextBlock FontSize="11" Opacity="0.65" Text="书签" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="最近动态" />
+            <SelectorBar x:Name="ActivityBar" SelectionChanged="ActivityBar_SelectionChanged">
+                <SelectorBarItem Text="全部" IsSelected="True" Tag="All" />
+                <SelectorBarItem Text="主题" Tag="Topics" />
+                <SelectorBarItem Text="回复" Tag="Replies" />
+                <SelectorBarItem Text="获赞" Tag="LikesReceived" />
+            </SelectorBar>
+            <ListView x:Name="ActivityList" IsItemClickEnabled="True" ItemClick="ActivityList_ItemClick" SelectionMode="None">
+                <ListView.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Padding="8,8" Spacing="2">
+                            <TextBlock FontWeight="SemiBold" Text="{Binding Title}" TextWrapping="Wrap" />
+                            <TextBlock FontSize="12" Opacity="0.65" Text="{Binding Subtitle}" />
+                        </StackPanel>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+
+            <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="创建的主题" />
+            <ListView x:Name="TopicList" IsItemClickEnabled="True" ItemClick="TopicList_ItemClick" SelectionMode="None">
+                <ListView.ItemTemplate>
+                    <DataTemplate x:DataType="home:TopicListItemViewModel">
+                        <StackPanel Padding="8,8" Spacing="2">
+                            <TextBlock FontWeight="SemiBold" Text="{x:Bind DisplayTitle, Mode=OneWay}" TextWrapping="Wrap" />
+                            <TextBlock FontSize="12" Opacity="0.6" Text="{x:Bind Meta, Mode=OneWay}" />
+                        </StackPanel>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+
+            <TextBlock x:Name="ErrorText" Foreground="{ThemeResource SystemFillColorCriticalBrush}" TextWrapping="Wrap" />
+        </StackPanel>
+    </ScrollViewer>
+</Page>

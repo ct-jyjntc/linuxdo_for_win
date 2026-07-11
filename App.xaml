@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Application
+    x:Class="LinuxDo.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:LinuxDo.Controls">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <controls:NullToCollapsedConverter x:Key="NullToCollapsedConverter" />
+            <controls:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
+            <controls:StringToBoolConverter x:Key="StringToBoolConverter" />
+            <controls:InvertBoolConverter x:Key="InvertBoolConverter" />
+
+            <Style TargetType="controls:CachedImage">
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="controls:CachedImage">
+                            <Grid>
+                                <Image
+                                    x:Name="PART_Image"
+                                    Stretch="{TemplateBinding Stretch}"
+                                    HorizontalAlignment="{TemplateBinding HorizontalAlignment}"
+                                    VerticalAlignment="{TemplateBinding VerticalAlignment}" />
+                                <ProgressRing
+                                    x:Name="PART_Ring"
+                                    Width="28"
+                                    Height="28"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    IsActive="False" />
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style TargetType="controls:InlineTextBlock">
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="controls:InlineTextBlock">
+                            <RichTextBlock
+                                x:Name="PART_RichText"
+                                IsTextSelectionEnabled="True"
+                                TextWrapping="WrapWholeWords" />
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

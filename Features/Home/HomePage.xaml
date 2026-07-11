@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Page
+    x:Class="LinuxDo.Features.Home.HomePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:local="using:LinuxDo.Features.Home"
+    xmlns:controls="using:LinuxDo.Controls"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Grid Padding="0,0,0,0">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Grid Padding="20,12,20,8" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock
+                VerticalAlignment="Center"
+                Style="{StaticResource SubtitleTextBlockStyle}"
+                Text="{x:Bind ViewModel.Title, Mode=OneWay}" />
+            <StackPanel
+                x:Name="TopPeriodPanel"
+                Grid.Column="1"
+                Orientation="Horizontal"
+                Spacing="4"
+                Visibility="Collapsed">
+                <Button Content="今日" Click="TopPeriod_Click" Tag="Daily" />
+                <Button Content="本周" Click="TopPeriod_Click" Tag="Weekly" />
+                <Button Content="本月" Click="TopPeriod_Click" Tag="Monthly" />
+                <Button Content="今年" Click="TopPeriod_Click" Tag="Yearly" />
+                <Button Content="全部" Click="TopPeriod_Click" Tag="All" />
+            </StackPanel>
+        </Grid>
+
+        <!-- Content -->
+        <Grid Grid.Row="1">
+            <ProgressRing
+                Width="40"
+                Height="40"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
+                Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay}" />
+
+            <StackPanel
+                x:Name="ErrorPanel"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Spacing="12"
+                Visibility="Collapsed">
+                <FontIcon FontSize="32" Glyph="&#xE783;" />
+                <TextBlock
+                    x:Name="ErrorText"
+                    HorizontalAlignment="Center"
+                    TextWrapping="Wrap"
+                    MaxWidth="420" />
+                <Button
+                    HorizontalAlignment="Center"
+                    Click="Retry_Click"
+                    Content="重试" />
+            </StackPanel>
+
+            <ListView
+                x:Name="TopicList"
+                IsItemClickEnabled="True"
+                ItemClick="TopicList_ItemClick"
+                ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}"
+                SelectionMode="Single"
+                ContainerContentChanging="TopicList_ContainerContentChanging"
+                RightTapped="TopicList_RightTapped">
+                <ListView.ItemTemplate>
+                    <DataTemplate x:DataType="local:TopicListItemViewModel">
+                        <Grid Padding="{x:Bind RowPadding, Mode=OneWay}" ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border
+                                Width="{x:Bind AvatarSize, Mode=OneWay}"
+                                Height="{x:Bind AvatarSize, Mode=OneWay}"
+                                CornerRadius="20"
+                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                                <Grid>
+                                    <TextBlock
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center"
+                                        FontSize="12"
+                                        Opacity="0.6"
+                                        Text="{x:Bind AuthorName, Mode=OneWay}" />
+                                    <controls:CachedImage
+                                        Width="{x:Bind AvatarSize, Mode=OneWay}"
+                                        Height="{x:Bind AvatarSize, Mode=OneWay}"
+                                        SourceUrl="{x:Bind AvatarUrl, Mode=OneWay}"
+                                        Stretch="UniformToFill" />
+                                </Grid>
+                            </Border>
+                            <StackPanel Grid.Column="1" Spacing="4">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon
+                                        FontSize="11"
+                                        Foreground="Orange"
+                                        Glyph="&#xE718;"
+                                        Visibility="{x:Bind IsPinned, Mode=OneWay}" />
+                                    <FontIcon
+                                        FontSize="11"
+                                        Glyph="&#xE72E;"
+                                        Visibility="{x:Bind IsClosed, Mode=OneWay}" />
+                                    <TextBlock
+                                        FontWeight="SemiBold"
+                                        Text="{x:Bind DisplayTitle, Mode=OneWay}"
+                                        TextWrapping="WrapWholeWords"
+                                        MaxLines="{x:Bind TitleMaxLines, Mode=OneWay}"
+                                        TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="8" Visibility="{x:Bind ShowCategoryRow, Mode=OneWay}">
+                                    <Border
+                                        Padding="6,2"
+                                        CornerRadius="4"
+                                        Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                        Opacity="0.15"
+                                        Visibility="{x:Bind CategoryName, Mode=OneWay, Converter={StaticResource NullToCollapsedConverter}}">
+                                        <TextBlock
+                                            FontSize="11"
+                                            FontWeight="SemiBold"
+                                            Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                            Text="{x:Bind CategoryName, Mode=OneWay}" />
+                                    </Border>
+                                    <TextBlock
+                                        FontSize="11"
+                                        Opacity="0.7"
+                                        Text="{x:Bind TagsText, Mode=OneWay}" />
+                                </StackPanel>
+                                <TextBlock
+                                    FontSize="12"
+                                    Opacity="0.6"
+                                    Text="{x:Bind Meta, Mode=OneWay}" />
+                            </StackPanel>
+                            <Grid.ContextFlyout>
+                                <MenuFlyout>
+                                    <MenuFlyoutItem Text="打开" Click="ContextOpen_Click" Tag="{x:Bind}" />
+                                    <MenuFlyoutItem Text="在新窗口打开" Click="ContextOpenNewWindow_Click" Tag="{x:Bind}" />
+                                    <MenuFlyoutItem Text="稍后阅读" Click="ContextReadLater_Click" Tag="{x:Bind}" />
+                                    <MenuFlyoutItem Text="复制链接" Click="ContextCopy_Click" Tag="{x:Bind}" />
+                                    <MenuFlyoutItem Text="系统分享" Click="ContextShare_Click" Tag="{x:Bind}" />
+                                </MenuFlyout>
+                            </Grid.ContextFlyout>
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+        </Grid>
+    </Grid>
+</Page>

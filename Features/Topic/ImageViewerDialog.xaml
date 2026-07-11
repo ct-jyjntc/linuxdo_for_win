@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentDialog
+    x:Class="LinuxDo.Features.Topic.ImageViewerDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="图片预览"
+    CloseButtonText="关闭"
+    PrimaryButtonText="保存"
+    SecondaryButtonText="复制地址"
+    PrimaryButtonClick="Save_Click"
+    SecondaryButtonClick="CopyUrl_Click"
+    MinWidth="720">
+
+    <Grid MinWidth="680" MinHeight="480" RowSpacing="8">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="适应" Click="Fit_Click" />
+            <Button Content="100%" Click="Actual_Click" />
+            <Button Content="放大" Click="ZoomIn_Click" />
+            <Button Content="缩小" Click="ZoomOut_Click" />
+            <TextBlock x:Name="ZoomText" VerticalAlignment="Center" Opacity="0.7" Text="100%" />
+        </StackPanel>
+
+        <ScrollViewer
+            x:Name="Scroller"
+            Grid.Row="1"
+            ZoomMode="Enabled"
+            MinZoomFactor="0.1"
+            MaxZoomFactor="8"
+            HorizontalScrollMode="Enabled"
+            VerticalScrollMode="Enabled"
+            HorizontalScrollBarVisibility="Auto"
+            VerticalScrollBarVisibility="Auto"
+            ViewChanged="Scroller_ViewChanged"
+            Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+            <Image x:Name="PreviewImage" Stretch="None" />
+        </ScrollViewer>
+
+        <TextBlock Grid.Row="2" x:Name="UrlText" FontSize="11" Opacity="0.6" TextTrimming="CharacterEllipsis" IsTextSelectionEnabled="True" />
+    </Grid>
+</ContentDialog>

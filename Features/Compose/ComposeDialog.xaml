@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentDialog
+    x:Class="LinuxDo.Features.Compose.ComposeDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:LinuxDo.Controls"
+    Title="发帖"
+    PrimaryButtonText="发布"
+    SecondaryButtonText="存草稿"
+    CloseButtonText="取消"
+    PrimaryButtonClick="Publish_Click"
+    SecondaryButtonClick="SaveDraft_Click"
+    DefaultButton="Primary"
+    MinWidth="680">
+
+    <ScrollViewer MaxHeight="600">
+        <StackPanel MinWidth="600" Spacing="10" Padding="4">
+            <TextBox x:Name="TitleBox" Header="标题" PlaceholderText="主题标题（回复时可留空）" />
+            <ComboBox x:Name="CategoryBox" Header="分类" Width="320" PlaceholderText="选择分类" />
+            <TextBox x:Name="TagsBox" Header="标签（逗号分隔，可选）" />
+            <TextBox x:Name="RecipientsBox" Header="私信收件人（逗号分隔）" Visibility="Collapsed" />
+
+            <StackPanel Orientation="Horizontal" Spacing="4">
+                <Button Content="B" Click="Bold_Click" Width="36" ToolTipService.ToolTip="粗体" />
+                <Button Content="I" Click="Italic_Click" Width="36" ToolTipService.ToolTip="斜体" />
+                <Button Content="链接" Click="Link_Click" />
+                <Button Content="代码" Click="Code_Click" />
+                <Button Content="引用" Click="Quote_Click" />
+                <Button Content="列表" Click="List_Click" />
+                <Button Content="图片" Click="Image_Click" />
+                <Button Content="😀" Click="Emoji_Click" />
+                <Button Content="模板" Click="Template_Click" />
+                <Button Content="预览" Click="Preview_Click" />
+            </StackPanel>
+
+            <Grid ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBox
+                    x:Name="BodyBox"
+                    Header="正文（Markdown）· Ctrl+V 粘贴图片可直传"
+                    AcceptsReturn="True"
+                    TextWrapping="Wrap"
+                    MinHeight="240"
+                    PlaceholderText="写点什么… 输入 @ 可搜索用户 · 粘贴图片自动上传"
+                    TextChanged="BodyBox_TextChanged"
+                    Paste="BodyBox_Paste" />
+                <Border x:Name="PreviewPane" Grid.Column="1" Visibility="Collapsed" Padding="8"
+                        Background="{ThemeResource SubtleFillColorSecondaryBrush}" CornerRadius="6"
+                        MinHeight="240">
+                    <ScrollViewer>
+                        <StackPanel x:Name="PreviewHost" Spacing="8" />
+                    </ScrollViewer>
+                </Border>
+            </Grid>
+
+            <ListView x:Name="MentionList" MaxHeight="120" Visibility="Collapsed" IsItemClickEnabled="True"
+                      ItemClick="MentionList_ItemClick" />
+
+            <TextBlock x:Name="StatusText" Opacity="0.7" TextWrapping="Wrap" />
+            <TextBlock x:Name="ErrorText" Foreground="{ThemeResource SystemFillColorCriticalBrush}" TextWrapping="Wrap" />
+        </StackPanel>
+    </ScrollViewer>
+</ContentDialog>
