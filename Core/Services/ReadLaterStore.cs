@@ -2,8 +2,6 @@ using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using LinuxDo.Core.Models;
 using LinuxDo.Core.Utilities;
-using Windows.Storage;
-
 namespace LinuxDo.Core.Services;
 
 public partial class ReadLaterStore : ObservableObject
@@ -11,7 +9,7 @@ public partial class ReadLaterStore : ObservableObject
     public static ReadLaterStore Current { get; } = new();
 
     private const string Key = "readlater.topics.v1";
-    private readonly ApplicationDataContainer _defaults = ApplicationData.Current.LocalSettings;
+    private readonly LocalKvStore _store = new("readlater");
 
     [ObservableProperty] private List<LocalTopicItem> _items = [];
 
@@ -23,7 +21,7 @@ public partial class ReadLaterStore : ObservableObject
     {
         try
         {
-            if (_defaults.Values.TryGetValue(Key, out var v) && v is string json)
+            if (_store.TryGetString(Key, out var json) && !string.IsNullOrEmpty(json))
             {
                 var list = JsonSerializer.Deserialize<List<LocalTopicItem>>(json, JsonFlexible.Options) ?? [];
                 Items = list.OrderByDescending(i => i.SavedAt ?? i.LastVisitedAt).ToList();
@@ -91,7 +89,7 @@ public partial class ReadLaterStore : ObservableObject
     {
         try
         {
-            _defaults.Values[Key] = JsonSerializer.Serialize(Items, JsonFlexible.Options);
+            _store.SetString(Key, JsonSerializer.Serialize(Items, JsonFlexible.Options));
         }
         catch (Exception ex)
         {

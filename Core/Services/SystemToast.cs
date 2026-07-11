@@ -14,14 +14,18 @@ public static class SystemToast
         if (_registered) return;
         try
         {
+            // Unpackaged WinUI: Register can throw COM / stowed exceptions on some machines.
+            // Never let toast registration take down the process.
             var manager = AppNotificationManager.Default;
+            manager.NotificationInvoked -= OnInvoked;
             manager.NotificationInvoked += OnInvoked;
             manager.Register();
             _registered = true;
         }
         catch (Exception ex)
         {
-            AppLog.Warning("toast", "Register failed: " + ex.Message);
+            AppLog.Warning("toast", "Register failed (notifications disabled): " + ex.Message);
+            _registered = false;
         }
     }
 
@@ -33,10 +37,10 @@ public static class SystemToast
             EnsureRegistered();
             var builder = new AppNotificationBuilder()
                 .AddText(title)
-                .AddText(body);
+                .AddText(body)
+                .AddArgument("action", topicId is int ? "openTopic" : "openApp");
             if (topicId is int tid)
             {
-                builder.AddArgument("action", "openTopic");
                 builder.AddArgument("topicId", tid.ToString());
                 if (postNumber is int pn)
                     builder.AddArgument("postNumber", pn.ToString());
@@ -106,15 +110,20 @@ public static class SystemToast
     {
         try
         {
-            if (args.Arguments.TryGetValue("action", out var action) && action == "openTopic" &&
-                args.Arguments.TryGetValue("topicId", out var tidStr) &&
-                int.TryParse(tidStr, out var tid))
+            // Always bring app back when user clicks a toast (may be tray-hidden)
+            App.DispatcherQueue?.TryEnqueue(() =>
             {
-                int? post = args.Arguments.TryGetValue("postNumber", out var pnStr) && int.TryParse(pnStr, out var pn)
-                    ? pn : null;
-                App.DispatcherQueue?.TryEnqueue(() =>
-                    AppRouter.Current.OpenTopic(tid, null, post));
-            }
+                try { MainWindow.RestoreFromTray(); } catch { /* ignore */ }
+
+                if (args.Arguments.TryGetValue("action", out var action) && action == "openTopic" &&
+                    args.Arguments.TryGetValue("topicId", out var tidStr) &&
+                    int.TryParse(tidStr, out var tid))
+                {
+                    int? post = args.Arguments.TryGetValue("postNumber", out var pnStr) && int.TryParse(pnStr, out var pn)
+                        ? pn : null;
+                    AppRouter.Current.OpenTopic(tid, null, post);
+                }
+            });
         }
         catch (Exception ex)
         {

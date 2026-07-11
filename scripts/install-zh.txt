@@ -1,0 +1,21 @@
+LinuxDo Windows 安装说明
+构建号: __BUILD_ID__
+
+【重要】请不要直接双击 .msix 安装！
+本安装包使用开发自签名证书，直接双击通常会提示「无法验证发布者」并拒绝安装。
+这不是安装包损坏，而是尚未信任签名证书。
+
+【推荐】使用安装脚本
+  1. 设置 → 系统 → 开发者选项 → 打开「开发人员模式」
+  2. 确保同目录有：LinuxDo-latest.msix、LinuxDo-Signing.cer、Install-LinuxDo.ps1
+  3. 右键 Install-LinuxDo.ps1 → 使用 PowerShell 运行
+  4. 若提示无法验证：用「管理员」打开 PowerShell 后再运行该脚本
+  5. 开始菜单搜索 LinuxDo 启动
+
+【不会 PowerShell】图形界面安装
+  1. 先打开开发人员模式
+  2. 双击 LinuxDo-Signing.cer → 安装证书
+     → 本地计算机 → 将所有证书放入「受信任的根证书颁发机构」
+  3. 证书导入成功后，再双击 .msix 安装
+
+仓库: https://github.com/ct-jyjntc/linuxdo_for_win

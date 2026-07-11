@@ -35,6 +35,9 @@ public sealed partial class SettingsPage : Page
         AutosaveDraftsSwitch.IsOn = s.AutosaveServerDrafts;
         KeywordsBox.Text = s.MutedKeywordsText;
         BaseUrlBox.Text = s.BaseUrlString;
+        BuildText.Text = $"构建 {AppVersion.BuildId}";
+        LogPathText.Text = AppLog.CurrentLogFile;
+        UpdateStatusText.Text = "";
         RefreshShortcutList();
         _ready = true;
     }
@@ -118,10 +121,16 @@ public sealed partial class SettingsPage : Page
         try
         {
             if (TrayIconSwitch.IsOn)
+            {
                 TrayIconService.Shared.Configure(App.WindowHandle);
+                TrayIconService.Shared.Refresh(UserSessionStore.Current.UnreadCount);
+                StatusText.Text = "托盘图标已启用（始终显示；关闭窗口会最小化到托盘）";
+            }
             else
+            {
                 TrayIconService.Shared.TearDown();
-            StatusText.Text = TrayIconSwitch.IsOn ? "托盘图标已启用" : "托盘图标已关闭";
+                StatusText.Text = "托盘图标已关闭（关闭窗口将无法从托盘恢复，建议保持开启）";
+            }
         }
         catch (Exception ex)
         {
@@ -149,14 +158,111 @@ public sealed partial class SettingsPage : Page
         SiteAccessStore.Current.PresentChallenge(force: true);
     }
 
+    private async void OpenLog_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var dir = AppLog.LogDirectory;
+            LogPathText.Text = AppLog.CurrentLogFile;
+            await Launcher.LaunchFolderPathAsync(dir);
+            StatusText.Text = "已打开日志目录";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = "无法打开日志目录：" + ex.Message;
+            LogPathText.Text = AppLog.CurrentLogFile;
+        }
+    }
+
+    private async void CopyLogPath_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var path = AppLog.CurrentLogFile;
+            LogPathText.Text = path;
+            var data = new Windows.ApplicationModel.DataTransfer.DataPackage();
+            data.SetText(path);
+            Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(data);
+            StatusText.Text = "日志路径已复制";
+            await Task.CompletedTask;
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = "复制失败：" + ex.Message;
+        }
+    }
+
     private void ClearCache_Click(object sender, RoutedEventArgs e)
     {
         HtmlText.ClearCache();
         ImageLoader.Shared.ClearAll();
         OneboxService.Shared.ClearCache();
         PostContentCache.Clear();
+        ApiResponseCache.Clear();
         var usage = ImageLoader.Shared.Usage();
-        StatusText.Text = $"缓存已清理（图片内存 {usage.MemoryEntries} / 磁盘 {usage.DiskFiles}，帖子解析缓存已清空）";
+        StatusText.Text = $"缓存已清理（图片内存 {usage.MemoryEntries} / 磁盘 {usage.DiskFiles}，API/帖子缓存已清空）";
+    }
+
+    private async void OpenRepo_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await Launcher.LaunchUriAsync(new Uri(AppVersion.RepoUrl));
+        }
+        catch (Exception ex)
+        {
+            UpdateStatusText.Text = "无法打开仓库：" + ex.Message;
+        }
+    }
+
+    private async void CheckUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        CheckUpdateButton.IsEnabled = false;
+        UpdateRing.Visibility = Visibility.Visible;
+        UpdateRing.IsActive = true;
+        UpdateStatusText.Text = "正在检查更新…";
+        try
+        {
+            var result = await UpdateService.CheckAsync();
+            switch (result.ResultKind)
+            {
+                case UpdateCheckResult.Kind.Available:
+                    UpdateStatusText.Text =
+                        $"发现新构建：{result.LatestBuildId}（当前 {result.CurrentBuildId}）";
+                    var go = await new ContentDialog
+                    {
+                        Title = "发现新版本",
+                        Content = $"当前构建：{result.CurrentBuildId}\n最新构建：{result.LatestBuildId}\n\n是否前往 GitHub 下载更新？",
+                        PrimaryButtonText = "更新",
+                        CloseButtonText = "稍后",
+                        DefaultButton = ContentDialogButton.Primary,
+                        XamlRoot = XamlRoot
+                    }.ShowAsync();
+                    if (go == ContentDialogResult.Primary &&
+                        !string.IsNullOrEmpty(result.ReleaseUrl) &&
+                        Uri.TryCreate(result.ReleaseUrl, UriKind.Absolute, out var uri))
+                    {
+                        await Launcher.LaunchUriAsync(uri);
+                    }
+                    break;
+                case UpdateCheckResult.Kind.UpToDate:
+                    UpdateStatusText.Text = $"已是最新（构建 {result.CurrentBuildId}）";
+                    break;
+                default:
+                    UpdateStatusText.Text = result.Message ?? "检查失败";
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            UpdateStatusText.Text = "检查失败：" + ex.Message;
+        }
+        finally
+        {
+            UpdateRing.IsActive = false;
+            UpdateRing.Visibility = Visibility.Collapsed;
+            CheckUpdateButton.IsEnabled = true;
+        }
     }
 
     private void ShortcutCapture_Click(object sender, RoutedEventArgs e)

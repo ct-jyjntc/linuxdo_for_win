@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
@@ -8,16 +8,18 @@
   xmlns:systemai="http://schemas.microsoft.com/appx/manifest/systemai/windows10"
   IgnorableNamespaces="uap rescap systemai">
 
+  <!-- Publisher MUST match the signing certificate subject (CN=LinuxDo) -->
+  <!-- Version is stamped by Package.ps1 from BuildId (yyyy.MMdd.HHmm.ss). -->
   <Identity
     Name="F9B5A1A2-51F9-4CE4-8100-87B6CC5C04D1"
-    Publisher="CN=AppPublisher"
-    Version="1.0.0.0" />
+    Publisher="CN=LinuxDo"
+    Version="0.0.0.0" />
 
   <mp:PhoneIdentity PhoneProductId="F9B5A1A2-51F9-4CE4-8100-87B6CC5C04D1" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
   <Properties>
     <DisplayName>LinuxDo</DisplayName>
-    <PublisherDisplayName>AppPublisher</PublisherDisplayName>
+    <PublisherDisplayName>LinuxDo</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 
@@ -36,7 +38,7 @@
       EntryPoint="$targetentrypoint$">
       <uap:VisualElements
         DisplayName="LinuxDo"
-        Description="LinuxDo"
+        Description="LinuxDo - unofficial Windows client for linux.do"
         BackgroundColor="transparent"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png">

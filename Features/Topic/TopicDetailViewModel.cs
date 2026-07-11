@@ -618,10 +618,11 @@ public partial class TopicDetailViewModel : ObservableObject
             else await DiscourseAPI.Shared.LikePostAsync(item.Id);
             item.Post = item.Post.WithLikeToggled();
             item.Refresh();
+            ActionMessage = item.IsLiked ? "已点赞" : "已取消点赞";
         }
         catch (Exception ex)
         {
-            ActionMessage = ex.Message;
+            ActionMessage = FormatActionError("点赞", ex);
             APIError.PostIfChallenge(ex);
         }
     }
@@ -638,9 +639,23 @@ public partial class TopicDetailViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ActionMessage = ex.Message;
+            ActionMessage = FormatActionError("表情", ex);
             APIError.PostIfChallenge(ex);
         }
+    }
+
+    private static string FormatActionError(string action, Exception ex)
+    {
+        var m = ex.Message ?? "";
+        if (m.Contains("CSRF", StringComparison.OrdinalIgnoreCase) ||
+            m.Contains("csrf", StringComparison.OrdinalIgnoreCase) ||
+            m.Contains("BAD CSRF", StringComparison.OrdinalIgnoreCase))
+            return $"{action}失败：会话校验失效，请重新登录后再试";
+        if (ex is APIError.Unauthorized || m.Contains("未授权", StringComparison.Ordinal))
+            return $"{action}失败：未登录或登录已过期";
+        if (ex is APIError.Forbidden)
+            return $"{action}失败：没有权限或会话无效，请重新登录";
+        return $"{action}失败：{m}";
     }
 
     public async Task VotePollAsync(PostItemViewModel item, string pollName, string optionId)

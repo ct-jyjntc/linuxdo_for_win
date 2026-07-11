@@ -10,15 +10,21 @@
     KeyDown="Page_KeyDown">
 
     <Grid>
-        <!-- Hidden WebView2 for API cookie / CF bridge -->
+        <!--
+          Off-screen but FULL-size WebView2 for CF/API bridge.
+          1×1 / fully invisible WebViews get Chromium throttled → in-page fetch status=0.
+          Keep a real layout size; park it off-screen so it never covers UI.
+        -->
         <WebView2
             x:Name="BridgeWebView"
-            Width="1"
-            Height="1"
-            Opacity="0"
+            Width="960"
+            Height="700"
+            Opacity="0.01"
             IsHitTestVisible="False"
             HorizontalAlignment="Left"
-            VerticalAlignment="Top" />
+            VerticalAlignment="Top"
+            Margin="-4000,-4000,0,0"
+            DefaultBackgroundColor="Transparent" />
 
         <NavigationView
             x:Name="NavView"
@@ -29,6 +35,8 @@
             CompactPaneLength="48"
             PaneDisplayMode="Left"
             IsPaneOpen="True"
+            PaneClosing="NavView_PaneClosing"
+            PaneOpening="NavView_PaneOpening"
             BackRequested="NavView_BackRequested"
             ItemInvoked="NavView_ItemInvoked"
             Loaded="NavView_Loaded">

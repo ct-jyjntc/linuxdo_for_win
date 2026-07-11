@@ -18,12 +18,40 @@ public sealed partial class DiscourseAPI
     private string? _clientId;
     private string? _csrfToken;
     private bool _allowWebViewFallback = true;
+    /// <summary>
+    /// After CF, .NET HttpClient often still trips WAF even with cf_clearance (TLS fingerprint).
+    /// Prefer the shared WebView for GETs until this time (mac uses same browser context for fetch).
+    /// </summary>
+    private DateTime _webViewFirstUntilUtc = DateTime.MinValue;
     private readonly object _gate = new();
 
     private DiscourseAPI()
     {
         CookieSessionBridge.PrimeUserAgent();
         _http = CookieSessionBridge.CreateHttpClient();
+    }
+
+    /// <summary>
+    /// After CF: enable WebView as FALLBACK only. Do NOT force WebView-first —
+    /// hidden WebView2 in-page fetch was status=0 for nearly every call (log 12:02–12:04).
+    /// HttpClient + synced cookies is the primary path; WebView is last resort.
+    /// </summary>
+    public void PreferWebViewFirst(TimeSpan duration)
+    {
+        // Intentionally do NOT set _webViewFirstUntilUtc. Keep HttpClient primary.
+        lock (_gate)
+        {
+            _allowWebViewFallback = true;
+            _webViewFirstUntilUtc = DateTime.MinValue;
+        }
+        ResetWebViewFailStreak();
+        AppLog.Network(
+            $"Post-CF: HttpClient primary, WebView fallback enabled ({duration.TotalSeconds:0}s window ignored for first)");
+    }
+
+    public void ClearWebViewFirst()
+    {
+        lock (_gate) _webViewFirstUntilUtc = DateTime.MinValue;
     }
 
     public Uri CurrentBaseUrl
@@ -90,45 +118,105 @@ public sealed partial class DiscourseAPI
     // ── Topics ──────────────────────────────────────────────
 
     public Task<TopicListResponse> FetchLatestAsync(int page = 0)
-        => GetAsync("latest.json", page > 0 ? new() { ["page"] = page.ToString() } : null,
-            TopicListResponse.FromJson);
+        => GetAsync("latest.json", BuildListQuery(page), TopicListResponse.FromJson);
+
+    /// <summary>Network-only probe (no response cache) — used after CF challenge.</summary>
+    public async Task<TopicListResponse> FetchLatestUncachedAsync(int page = 0)
+    {
+        var url = MakeUrl("latest.json", BuildListQuery(page));
+        await ApiResponseCache.ThrottleReadAsync();
+        var data = await PerformAsync(url, "GET", preferWebView: false);
+        if (ResponseInspector.IsProbablyJson(data))
+            ApiResponseCache.Set(ApiResponseCache.CacheKey(url), data, ApiResponseCache.TtlForPath("latest.json"));
+        return Decode(data, TopicListResponse.FromJson);
+    }
 
     public Task<TopicListResponse> FetchTopAsync(string period = "weekly", int page = 0)
     {
-        var q = new Dictionary<string, string> { ["period"] = period };
-        if (page > 0) q["page"] = page.ToString();
+        var q = BuildListQuery(page);
+        q["period"] = period;
         return GetAsync("top.json", q, TopicListResponse.FromJson);
     }
 
     public Task<TopicListResponse> FetchNewAsync(int page = 0)
-        => GetAsync("new.json", page > 0 ? new() { ["page"] = page.ToString() } : null,
-            TopicListResponse.FromJson);
+        => GetAsync("new.json", BuildListQuery(page), TopicListResponse.FromJson);
 
     public Task<TopicListResponse> FetchUnreadAsync(int page = 0)
-        => GetAsync("unread.json", page > 0 ? new() { ["page"] = page.ToString() } : null,
-            TopicListResponse.FromJson);
+        => GetAsync("unread.json", BuildListQuery(page), TopicListResponse.FromJson);
 
     public Task<TopicListResponse> FetchCategoryTopicsAsync(string slug, int id, int page = 0)
     {
         var path = $"c/{slug}/{id}.json";
-        return GetAsync(path, page > 0 ? new() { ["page"] = page.ToString() } : null,
-            TopicListResponse.FromJson);
+        return GetAsync(path, BuildListQuery(page), TopicListResponse.FromJson);
+    }
+
+    /// <summary>
+    /// Ask Discourse for a larger first page so fewer "load more" hits are needed.
+    /// Server may clamp; we still benefit when it honors per_page.
+    /// </summary>
+    private static Dictionary<string, string> BuildListQuery(int page, int perPage = 50)
+    {
+        var q = new Dictionary<string, string>
+        {
+            // Discourse topic lists accept per_page (often capped ~30-50).
+            ["per_page"] = Math.Clamp(perPage, 20, 50).ToString()
+        };
+        if (page > 0) q["page"] = page.ToString();
+        return q;
     }
 
     public async Task<TopicDetailResponse> FetchTopicAsync(int id, int? postNumber = null)
     {
         var path = postNumber is not null ? $"t/{id}/{postNumber}.json" : $"t/{id}.json";
         var url = MakeUrl(path);
+        var key = ApiResponseCache.CacheKey(url);
+        if (postNumber is null && ApiResponseCache.TryGet(key, out var cached) && cached is not null)
+        {
+            AppLog.Network($"cache hit topic {id}");
+            return Decode(cached, TopicDetailResponse.FromJson);
+        }
+
+        await ApiResponseCache.ThrottleReadAsync();
         var data = await PerformAsync(url, "GET", preferWebView: false);
+        if (postNumber is null && ResponseInspector.IsProbablyJson(data))
+            ApiResponseCache.Set(key, data, ApiResponseCache.TopicTtl);
         return Decode(data, TopicDetailResponse.FromJson);
     }
 
     public async Task<List<DiscoursePost>> FetchPostsAsync(int topicId, IReadOnlyList<int> postIds)
     {
         if (postIds.Count == 0) return [];
+        // Batch in chunks of 50 (Discourse limit) — one request per chunk instead of many.
+        const int chunk = 50;
+        if (postIds.Count <= chunk)
+            return await FetchPostsChunkAsync(topicId, postIds);
+
+        var all = new List<DiscoursePost>(postIds.Count);
+        for (var i = 0; i < postIds.Count; i += chunk)
+        {
+            var slice = postIds.Skip(i).Take(chunk).ToList();
+            var part = await FetchPostsChunkAsync(topicId, slice);
+            all.AddRange(part);
+        }
+        return all;
+    }
+
+    private async Task<List<DiscoursePost>> FetchPostsChunkAsync(int topicId, IReadOnlyList<int> postIds)
+    {
         var qs = string.Join("&", postIds.Select(id => $"post_ids[]={id}"));
         var url = new Uri($"{CurrentBaseUrl.AbsoluteUri.TrimEnd('/')}/t/{topicId}/posts.json?{qs}");
+        var key = ApiResponseCache.CacheKey(url);
+        if (ApiResponseCache.TryGet(key, out var cached) && cached is not null)
+        {
+            using var cdoc = JsonDocument.Parse(cached);
+            if (cdoc.RootElement.TryGetProperty("post_stream", out var cps))
+                return PostStream.FromJson(cps).Posts;
+        }
+
+        await ApiResponseCache.ThrottleReadAsync();
         var data = await PerformAsync(url, "GET");
+        if (ResponseInspector.IsProbablyJson(data))
+            ApiResponseCache.Set(key, data, TimeSpan.FromSeconds(45));
         using var doc = JsonDocument.Parse(data);
         if (doc.RootElement.TryGetProperty("post_stream", out var ps))
             return PostStream.FromJson(ps).Posts;
@@ -174,10 +262,7 @@ public sealed partial class DiscourseAPI
     {
         var name = tag.Trim();
         if (string.IsNullOrEmpty(name)) throw new APIError.InvalidUrl();
-        var q = page > 0 ? new Dictionary<string, string> { ["page"] = page.ToString() } : null;
-        var url = MakeUrl($"tag/{name}.json", q);
-        var data = await PerformAsync(url, "GET", preferWebView: false);
-        return Decode(data, TopicListResponse.FromJson);
+        return await GetAsync($"tag/{name}.json", BuildListQuery(page), TopicListResponse.FromJson);
     }
 
     // ── Search / notifications / user ───────────────────────
@@ -354,18 +439,37 @@ public sealed partial class DiscourseAPI
     public Task UnarchiveTopicAsync(int topicId)
         => PutRawJsonAsync($"t/{topicId}/status.json", new Dictionary<string, object?> { ["status"] = "archived", ["enabled"] = "false" });
 
+    private int _lastTimingsTopicId;
+    private DateTime _lastTimingsUtc = DateTime.MinValue;
+
     public async Task MarkTopicReadAsync(int topicId, int postNumber)
     {
+        // Best-effort only: never run write-recovery / WebView / challenge storms for timings.
+        if (SiteAccessStore.Current.NeedsChallenge || WebViewAPIClient.Shared.IsChallengeUiActive)
+            return;
+        if (ApiResponseCache.IsPaused)
+            return;
+        if (!UserSessionStore.Current.IsLoggedIn ||
+            !CookieSessionBridge.HasLoginCookie(CurrentBaseUrl))
+            return;
+        // Debounce: at most one timings POST per topic per 20s (rapid topic hopping was noisy).
+        if (topicId == _lastTimingsTopicId &&
+            DateTime.UtcNow - _lastTimingsUtc < TimeSpan.FromSeconds(20))
+            return;
         try
         {
-            await PostRawJsonAsync("topics/timings", new Dictionary<string, object?>
+            var url = MakeUrl("topics/timings");
+            var body = JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, object?>
             {
                 ["topic_id"] = topicId,
                 ["topic_time"] = 1000,
                 ["timings"] = new Dictionary<string, object?> { [postNumber.ToString()] = 1000 }
             });
+            _ = await PerformViaHttpAsync(url, "POST", body, "application/json", needsCsrf: true, acceptJson: true);
+            _lastTimingsTopicId = topicId;
+            _lastTimingsUtc = DateTime.UtcNow;
         }
-        catch { /* best effort */ }
+        catch { /* ignore */ }
     }
 
     public async Task<int?> BookmarkPostAsync(int postId, string? name = null, DateTimeOffset? reminderAt = null)
@@ -886,34 +990,80 @@ public sealed partial class DiscourseAPI
 
     // ── CSRF ────────────────────────────────────────────────
 
+    /// <summary>
+    /// Cookie-session writes need a CSRF token bound to the current _forum_session.
+    /// Always force-sync WebView cookies first so HttpClient and browser share the same jar.
+    /// </summary>
     public async Task PrepareWriteSessionAsync()
     {
-        lock (_gate)
+        // Sync cookies; only invalidate CSRF if we have none yet (avoid thrashing session/csrf).
+        string? existing;
+        lock (_gate) existing = _csrfToken;
+        await AdoptWebCookiesAsync(force: true, invalidateCsrf: string.IsNullOrEmpty(existing));
+
+        string? apiKey;
+        lock (_gate) apiKey = _apiKey;
+        if (apiKey is not null)
+            return;
+
+        if (!CookieSessionBridge.HasSessionCookie(CurrentBaseUrl))
         {
-            if (!string.IsNullOrEmpty(_csrfToken)) return;
+            try { await WebViewAPIClient.Shared.EnsureWarmAsync(CurrentBaseUrl, 5); } catch { /* ignore */ }
+            await AdoptWebCookiesAsync(force: true, invalidateCsrf: true);
         }
-        await AdoptWebCookiesAsync();
-        await EnsureCsrfTokenAsync();
+
+        // Reuse cached CSRF when present — force refresh only on 403 write path.
+        await EnsureCsrfTokenAsync(forceRefresh: false);
+        AppLog.Network("Write session ready (csrf=" +
+                       (string.IsNullOrEmpty(_csrfToken) ? "missing" : "ok") +
+                       ", sessionCookie=" + CookieSessionBridge.HasSessionCookie(CurrentBaseUrl) + ")");
     }
 
-    public async Task<string> EnsureCsrfTokenAsync()
+    public Task<string> EnsureCsrfTokenAsync() => EnsureCsrfTokenAsync(forceRefresh: false);
+
+    public async Task<string> EnsureCsrfTokenAsync(bool forceRefresh)
     {
-        lock (_gate)
+        if (!forceRefresh)
         {
-            if (!string.IsNullOrEmpty(_csrfToken)) return _csrfToken!;
+            lock (_gate)
+            {
+                if (!string.IsNullOrEmpty(_csrfToken)) return _csrfToken!;
+            }
+        }
+        else
+        {
+            lock (_gate) _csrfToken = null;
         }
 
-        await AdoptWebCookiesAsync();
+        await AdoptWebCookiesAsync(force: forceRefresh, invalidateCsrf: false);
 
-        var token = await FetchCsrfFromEndpointAsync()
-            ?? await FetchCsrfFromSessionCurrentAsync()
-            ?? await WebViewAPIClient.Shared.ExtractCsrfTokenAsync(CurrentBaseUrl)
-            ?? await FetchCsrfFromHomepageHtmlAsync();
+        // Prefer HttpClient /session/csrf with the shared cookie jar (mac URLSession path).
+        // WebView fetch for CSRF was causing status=0 storms while the document was navigating.
+        string? token = await FetchCsrfFromEndpointAsync()
+                        ?? await FetchCsrfFromSessionCurrentAsync();
+
+        // Meta tag from current document only if already warm — no navigation.
+        if (token is null && WebViewAPIClient.Shared.IsWarmDocument)
+        {
+            try
+            {
+                token = await WebViewAPIClient.Shared.ExtractCsrfTokenAsync(CurrentBaseUrl);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warning("csrf", "WebView meta extract: " + ex.Message);
+            }
+        }
+
+        // Last resort: homepage HTML via WebView only if not challenge UI.
+        if (token is null && !WebViewAPIClient.Shared.IsChallengeUiActive)
+            token = await FetchCsrfFromHomepageHtmlAsync();
 
         if (string.IsNullOrEmpty(token))
             throw new APIError.ServerMessage("无法获取 CSRF Token。请先完成站点验证并重新登录后再试。");
 
         lock (_gate) _csrfToken = token;
+        AppLog.Network("CSRF acquired (" + token.Length + " chars)");
         return token!;
     }
 
@@ -948,7 +1098,7 @@ public sealed partial class DiscourseAPI
         {
             var data = await WebViewAPIClient.Shared.FetchAsync(
                 CurrentBaseUrl, "GET",
-                new Dictionary<string, string> { ["Accept"] = "text/html" },
+                new Dictionary<string, string> { ["Accept"] = CookieSessionBridge.AcceptHtml },
                 expectJson: false);
             var html = Encoding.UTF8.GetString(data);
             return ExtractCsrf(html);
@@ -999,7 +1149,18 @@ public sealed partial class DiscourseAPI
     private async Task<T> GetAsync<T>(string path, Dictionary<string, string>? query, Func<JsonElement, T> map)
     {
         var url = MakeUrl(path, query);
+        var cacheable = ApiResponseCache.IsCacheableGet("GET", path);
+        var key = ApiResponseCache.CacheKey(url);
+        if (cacheable && ApiResponseCache.TryGet(key, out var cached) && cached is not null)
+        {
+            AppLog.Network($"cache hit GET {url.AbsolutePath}");
+            return Decode(cached, map);
+        }
+
+        await ApiResponseCache.ThrottleReadAsync();
         var data = await PerformAsync(url, "GET");
+        if (cacheable && ResponseInspector.IsProbablyJson(data))
+            ApiResponseCache.Set(key, data, ApiResponseCache.TtlForPath(path));
         return Decode(data, map);
     }
 
@@ -1025,33 +1186,78 @@ public sealed partial class DiscourseAPI
     private async Task DeleteAsync(string path, Dictionary<string, string>? query = null)
     {
         var url = MakeUrl(path, query);
-        await PerformAsync(url, "DELETE", needsCsrf: true);
+        await PerformWriteAsync(url, "DELETE", null, null);
     }
 
     private async Task<byte[]> PostRawJsonAsync(string path, Dictionary<string, object?> body)
     {
         var url = MakeUrl(path);
         var bodyData = JsonSerializer.SerializeToUtf8Bytes(body);
-        return await PerformAsync(url, "POST", bodyData, "application/json", needsCsrf: true);
+        return await PerformWriteAsync(url, "POST", bodyData, "application/json");
     }
 
     private async Task<byte[]> PutRawJsonAsync(string path, Dictionary<string, object?> body)
     {
         var url = MakeUrl(path);
         var bodyData = JsonSerializer.SerializeToUtf8Bytes(body);
-        return await PerformAsync(url, "PUT", bodyData, "application/json", needsCsrf: true);
+        return await PerformWriteAsync(url, "PUT", bodyData, "application/json");
     }
 
-    private async Task PutRawJsonAsync(string path, object body)
+    /// <summary>
+    /// Mutating calls: cookie sync + CSRF, HttpClient first, then one forced CSRF refresh,
+    /// then WebView fallback (same cookie profile as CF challenge).
+    /// </summary>
+    private async Task<byte[]> PerformWriteAsync(
+        Uri url, string method, byte[]? body, string? contentType)
     {
-        await PutRawJsonAsync(path, ToDict(body));
+        // Ensure session cookies are in the HttpClient jar before the first write attempt.
+        try
+        {
+            await AdoptWebCookiesAsync(force: false, invalidateCsrf: false);
+        }
+        catch { /* best effort */ }
+
+        try
+        {
+            return await PerformAsync(url, method, body, contentType, needsCsrf: true, acceptJson: true);
+        }
+        catch (APIError error) when (error is APIError.Forbidden or APIError.Unauthorized
+                                     || (error is APIError.Http h && h.Status is 403 or 422)
+                                     || error.IsChallengeRelated)
+        {
+            // Real permission denials ("没有权限") are not CSRF/CF — don't storm retries.
+            var msg = error.Message ?? "";
+            if (msg.Contains("没有权限", StringComparison.Ordinal) ||
+                msg.Contains("not permitted", StringComparison.OrdinalIgnoreCase) ||
+                msg.Contains("permission", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Warning("network", $"Write {method} {url.AbsolutePath} permission denied — no retry");
+                throw;
+            }
+
+            AppLog.Warning("network", $"Write {method} {url.AbsolutePath} failed ({error.Message}); resync + retry once");
+
+            await AdoptWebCookiesAsync(force: true, invalidateCsrf: true);
+            try { await EnsureCsrfTokenAsync(forceRefresh: true); }
+            catch (Exception csrfEx)
+            {
+                AppLog.Warning("csrf", "refresh before write retry: " + csrfEx.Message);
+            }
+
+            // One Http retry only — WebView write path was status=0 noise.
+            return await PerformViaHttpAsync(url, method, body, contentType, needsCsrf: true, acceptJson: true);
+        }
     }
 
-    private static Dictionary<string, object?> ToDict(object body)
+    private static APIError MapWriteError(APIError primary, APIError fallback)
     {
-        if (body is Dictionary<string, object?> d) return d;
-        var json = JsonSerializer.Serialize(body);
-        return JsonSerializer.Deserialize<Dictionary<string, object?>>(json) ?? new();
+        if (primary is APIError.ServerMessage or APIError.Http { Status: > 0 })
+            return primary;
+        if (fallback is APIError.ServerMessage or APIError.Http { Status: > 0 })
+            return fallback;
+        if (primary.IsChallengeRelated || fallback.IsChallengeRelated)
+            return new APIError.CloudflareChallenge();
+        return primary;
     }
 
     private async Task<UploadResponse> UploadMultipartAsync(
@@ -1125,6 +1331,17 @@ public sealed partial class DiscourseAPI
         return url;
     }
 
+    // Prevent stampede: many concurrent GETs all falling into WebView after one CF block.
+    private static int _webViewFailStreak;
+    private static DateTime _webViewCooldownUntilUtc = DateTime.MinValue;
+
+    /// <summary>Reset fail streak when user completes CF so WebView-first can work again.</summary>
+    public void ResetWebViewFailStreak()
+    {
+        Interlocked.Exchange(ref _webViewFailStreak, 0);
+        _webViewCooldownUntilUtc = DateTime.MinValue;
+    }
+
     private async Task<byte[]> PerformAsync(
         Uri url,
         string method,
@@ -1135,73 +1352,187 @@ public sealed partial class DiscourseAPI
         bool preferWebView = false)
     {
         bool allowFallback;
-        lock (_gate) allowFallback = _allowWebViewFallback;
+        bool forceWebViewFirst;
+        lock (_gate)
+        {
+            allowFallback = _allowWebViewFallback;
+            forceWebViewFirst = DateTime.UtcNow < _webViewFirstUntilUtc;
+        }
 
-        var webViewFirst = preferWebView && allowFallback &&
-                           method.Equals("GET", StringComparison.OrdinalIgnoreCase);
+        // While challenge dialog is open (shared WebView is interactive), never use WebView fallback.
+        var challengeOpen = SiteAccessStore.Current.NeedsChallenge ||
+                            WebViewAPIClient.Shared.IsChallengeUiActive;
+        if (challengeOpen)
+        {
+            allowFallback = false;
+            forceWebViewFirst = false;
+        }
+
+        // After CF: prefer shared WebView for GETs (HttpClient keeps re-tripping even with clearance).
+        var webViewFirst = allowFallback &&
+                           method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
+                           DateTime.UtcNow >= _webViewCooldownUntilUtc &&
+                           (preferWebView || forceWebViewFirst);
 
         if (webViewFirst)
         {
             try
             {
                 AppLog.Network($"WebView-first {method} {url}");
-                return await PerformViaWebViewAsync(url, method, body, contentType, needsCsrf);
+                var data = await PerformViaWebViewAsync(url, method, body, contentType, needsCsrf);
+                Interlocked.Exchange(ref _webViewFailStreak, 0);
+                return data;
             }
             catch (Exception ex)
             {
                 AppLog.Warning("network", $"WebView-first failed; trying HttpClient: {ex.Message}");
+                NoteWebViewFailure();
             }
+        }
+
+        APIError? httpError = null;
+        try
+        {
+            var data = await PerformViaHttpAsync(url, method, body, contentType, needsCsrf, acceptJson);
+            // Successful HttpClient read — clear WebView fail streak so future CF can use WebView again.
+            if (method.Equals("GET", StringComparison.OrdinalIgnoreCase))
+                Interlocked.Exchange(ref _webViewFailStreak, 0);
+            return data;
+        }
+        catch (APIError error) when (IsTransientNetwork(error))
+        {
+            // Brief soft retry for connection resets / disposed client / DNS blips.
+            AppLog.Warning("network", $"HttpClient transient ({error.Message}); soft retry");
+            await Task.Delay(350);
+            try
+            {
+                // Recreate client if a concurrent ResetHttpClient disposed it mid-flight.
+                lock (_gate)
+                {
+                    try { _ = _http.Timeout; }
+                    catch
+                    {
+                        _http = CookieSessionBridge.CreateHttpClient();
+                    }
+                }
+                return await PerformViaHttpAsync(url, method, body, contentType, needsCsrf, acceptJson);
+            }
+            catch (APIError retryError)
+            {
+                httpError = retryError;
+            }
+        }
+        catch (APIError error)
+        {
+            httpError = error;
+        }
+
+        if (httpError is null)
+            throw new APIError.Network(new Exception("request failed"));
+
+        // Plain Forbidden (e.g. /new.json while guest) is NOT Cloudflare — do not WebView thrash.
+        if (httpError is APIError.Forbidden && !httpError.IsChallengeRelated)
+            throw MapUserFacing(httpError);
+
+        var shouldFallback = allowFallback &&
+                             DateTime.UtcNow >= _webViewCooldownUntilUtc &&
+                             (httpError.IsChallengeRelated || IsHardChallenge(httpError));
+
+        if (!shouldFallback)
+        {
+            // One CF signal is enough — open challenge sheet via PostIfChallenge callers.
+            if (httpError.IsChallengeRelated || IsHardChallenge(httpError))
+                throw httpError is APIError.CloudflareChallenge
+                    ? httpError
+                    : new APIError.CloudflareChallenge();
+            throw MapUserFacing(httpError);
+        }
+
+        AppLog.Warning("network", $"HttpClient blocked ({httpError.Message}); sync cookies + retry");
+        await CookieSessionBridge.SyncWebViewCookiesToHttpAsync(CurrentBaseUrl, force: true);
+
+        if (!webViewFirst)
+        {
+            try
+            {
+                return await PerformViaHttpAsync(url, method, body, contentType, needsCsrf, acceptJson);
+            }
+            catch (Exception httpRetryEx)
+            {
+                AppLog.Warning("network", "HttpClient retry still blocked; WebView fallback: " + httpRetryEx.Message);
+            }
+        }
+
+        // After CF, avoid WebView fallback stampede: one CF signal is enough to open the sheet.
+        // Multiple concurrent WebView GETs abort each other (status=0) and look like "lost clearance".
+        if (_webViewFailStreak >= 1 || DateTime.UtcNow < _webViewCooldownUntilUtc)
+        {
+            NoteWebViewFailure();
+            AppLog.Warning("network", "Skip WebView fallback (cooldown/streak) — surface challenge once");
+            throw new APIError.CloudflareChallenge();
         }
 
         try
         {
-            return await PerformViaHttpAsync(url, method, body, contentType, needsCsrf, acceptJson);
+            // Never EnsureWarm navigate here — that reloads home and drops mid-session CF state.
+            // Fetch path warms only if document is blank.
+            var data = await PerformViaWebViewAsync(url, method, body, contentType, needsCsrf);
+            Interlocked.Exchange(ref _webViewFailStreak, 0);
+            return data;
         }
-        catch (APIError error)
+        catch (APIError webError)
         {
-            if (!allowFallback || !(error.IsChallengeRelated || IsHardChallenge(error)))
-                throw;
-
-            AppLog.Warning("network", $"HttpClient blocked ({error.Message}); sync cookies + retry");
-            await CookieSessionBridge.SyncWebViewCookiesToHttpAsync(CurrentBaseUrl, force: true);
-
-            if (!webViewFirst)
-            {
-                try
-                {
-                    return await PerformViaHttpAsync(url, method, body, contentType, needsCsrf, acceptJson);
-                }
-                catch
-                {
-                    AppLog.Warning("network", "HttpClient retry still blocked; WebView fallback");
-                }
-            }
-
-            try
-            {
-                return await PerformViaWebViewAsync(url, method, body, contentType, needsCsrf);
-            }
-            catch (APIError webError)
-            {
-                if (webError.IsChallengeRelated || IsHardChallenge(webError))
-                    throw new APIError.CloudflareChallenge();
-                throw;
-            }
-            catch
-            {
+            NoteWebViewFailure();
+            if (webError.IsChallengeRelated || IsHardChallenge(webError) || IsTransientNetwork(webError))
                 throw new APIError.CloudflareChallenge();
-            }
+            throw MapUserFacing(webError);
+        }
+        catch
+        {
+            NoteWebViewFailure();
+            throw new APIError.CloudflareChallenge();
         }
     }
 
+    private static void NoteWebViewFailure()
+    {
+        var n = Interlocked.Increment(ref _webViewFailStreak);
+        if (n >= 2)
+        {
+            _webViewCooldownUntilUtc = DateTime.UtcNow.AddSeconds(20);
+            AppLog.Warning("network", $"WebView fail streak={n}, cooldown 20s");
+        }
+    }
+
+    /// <summary>
+    /// Only true CF / non-JSON challenge pages. Plain Forbidden (auth/permission) is NOT a challenge.
+    /// </summary>
     private static bool IsHardChallenge(APIError error) => error switch
     {
         APIError.CloudflareChallenge => true,
         APIError.NonJsonResponse => true,
-        APIError.Http { Status: 403 or 503 } => true,
-        APIError.Forbidden => true,
+        APIError.Http { Status: 503 } => true,
+        APIError.Http h when h.Status == 403 && h.IsChallengeRelated => true,
         _ => false
     };
+
+    private static bool IsTransientNetwork(APIError error) => error switch
+    {
+        APIError.Network => true,
+        APIError.Http { Status: 0 } => true,
+        _ => false
+    };
+
+    private static APIError MapUserFacing(APIError error)
+    {
+        if (error is APIError.Http { Status: 0 })
+            return new APIError.Network(new Exception("网络请求中断，请稍后重试"));
+        if (error is APIError.Network { Message: var m } &&
+            (m.Contains("HTTP 0", StringComparison.OrdinalIgnoreCase) ||
+             m.Contains("status=0", StringComparison.OrdinalIgnoreCase)))
+            return new APIError.Network(new Exception("网络请求中断，请稍后重试"));
+        return error;
+    }
 
     private async Task<byte[]> PerformViaHttpAsync(
         Uri url, string method, byte[]? body, string? contentType, bool needsCsrf, bool acceptJson)
@@ -1262,39 +1593,54 @@ public sealed partial class DiscourseAPI
                         throw new APIError.CloudflareChallenge();
                     throw new APIError.Forbidden();
                 }
-                // CSRF retry for writes
-                string? apiKey;
-                lock (_gate) apiKey = _apiKey;
-                if (apiKey is null)
+                // CSRF retry for writes — also surface Discourse error body when present.
                 {
-                    lock (_gate) _csrfToken = null;
-                    var token = await EnsureCsrfTokenAsync();
-                    using var retry = new HttpRequestMessage(new HttpMethod(method), url);
-                    if (body is not null)
-                    {
-                        retry.Content = new ByteArrayContent(body);
-                        if (contentType is not null)
-                            retry.Content.Headers.ContentType = new MediaTypeHeaderValue(contentType);
-                    }
-                    await ApplyHeadersAsync(retry, needsCsrf: true, acceptJson);
-                    retry.Headers.Remove("X-CSRF-Token");
-                    retry.Headers.TryAddWithoutValidation("X-CSRF-Token", token);
-                    var retryResp = await _http.SendAsync(retry);
-                    var retryData = await retryResp.Content.ReadAsByteArrayAsync();
-                    var retryStatus = (int)retryResp.StatusCode;
-                    if (ResponseInspector.LooksLikeCloudflare(retryData, retryStatus))
-                        throw new APIError.CloudflareChallenge();
-                    if (retryStatus is >= 200 and <= 299) return retryData;
-                    if (retryStatus == 401) throw new APIError.Unauthorized();
-                    if (retryStatus == 403)
+                    var msg = ExtractErrorMessage(data);
+                    string? apiKey;
+                    lock (_gate) apiKey = _apiKey;
+                    if (apiKey is null)
                     {
                         lock (_gate) _csrfToken = null;
-                        throw new APIError.Forbidden();
+                        await AdoptWebCookiesAsync(force: true, invalidateCsrf: false);
+                        var token = await EnsureCsrfTokenAsync(forceRefresh: true);
+                        using var retry = new HttpRequestMessage(new HttpMethod(method), url);
+                        if (body is not null)
+                        {
+                            retry.Content = new ByteArrayContent(body);
+                            if (contentType is not null)
+                                retry.Content.Headers.ContentType = new MediaTypeHeaderValue(contentType);
+                        }
+                        await ApplyHeadersAsync(retry, needsCsrf: true, acceptJson);
+                        try { retry.Headers.Remove("X-CSRF-Token"); } catch { /* ignore */ }
+                        retry.Headers.TryAddWithoutValidation("X-CSRF-Token", token);
+                        var retryResp = await _http.SendAsync(retry);
+                        var retryData = await retryResp.Content.ReadAsByteArrayAsync();
+                        var retryStatus = (int)retryResp.StatusCode;
+                        if (ResponseInspector.LooksLikeCloudflare(retryData, retryStatus))
+                            throw new APIError.CloudflareChallenge();
+                        if (retryStatus is >= 200 and <= 299) return retryData;
+                        if (retryStatus == 401) throw new APIError.Unauthorized();
+                        if (retryStatus == 403)
+                        {
+                            lock (_gate) _csrfToken = null;
+                            var retryMsg = ExtractErrorMessage(retryData);
+                            // Prefer server message over generic Forbidden so UI can show CSRF/login hints.
+                            if (!string.IsNullOrWhiteSpace(retryMsg) &&
+                                !retryMsg.StartsWith('<') &&
+                                retryMsg.Length < 400)
+                                throw new APIError.Http(403, retryMsg);
+                            throw new APIError.Forbidden();
+                        }
+                        throw new APIError.Http(retryStatus, ExtractErrorMessage(retryData));
                     }
-                    throw new APIError.Http(retryStatus, ExtractErrorMessage(retryData));
+                    lock (_gate) _csrfToken = null;
+                    if (!string.IsNullOrWhiteSpace(msg) && !msg.StartsWith('<') && msg.Length < 400)
+                        throw new APIError.Http(403, msg);
+                    throw new APIError.Forbidden();
                 }
-                lock (_gate) _csrfToken = null;
-                throw new APIError.Forbidden();
+            case 422:
+                // Discourse validation / bad payload — keep the server errors array.
+                throw new APIError.Http(422, ExtractErrorMessage(data));
             case 429:
                 throw new APIError.RateLimited();
             case 503:
@@ -1323,11 +1669,20 @@ public sealed partial class DiscourseAPI
         if (clientId is not null)
             request.Headers.TryAddWithoutValidation("User-Api-Client-Id", clientId);
 
-        request.Headers.TryAddWithoutValidation("Referer", baseUrl.AbsoluteUri.TrimEnd('/') + "/");
-        request.Headers.TryAddWithoutValidation("Origin", baseUrl.AbsoluteUri.TrimEnd('/'));
+        // Full browser-like surface (UA + client hints + Sec-Fetch-*) so CF sees XHR, not a bare bot.
+        CookieSessionBridge.ApplyBrowserHeaders(
+            request,
+            pageUrl: baseUrl,
+            acceptJson: acceptJson,
+            fetchSite: "same-origin",
+            fetchMode: "cors",
+            fetchDest: "empty");
+
         request.Headers.TryAddWithoutValidation("Discourse-Present", "true");
         request.Headers.TryAddWithoutValidation("X-Requested-With", "XMLHttpRequest");
-        request.Headers.TryAddWithoutValidation("User-Agent", CookieSessionBridge.UserAgent);
+        // Match Chrome fetch cache behavior for API GETs
+        request.Headers.TryAddWithoutValidation("Cache-Control", "no-cache");
+        request.Headers.TryAddWithoutValidation("Pragma", "no-cache");
 
         if (needsCsrf && apiKey is null)
         {
@@ -1338,21 +1693,29 @@ public sealed partial class DiscourseAPI
         {
             request.Headers.TryAddWithoutValidation("X-CSRF-Token", csrf);
         }
-
-        if (acceptJson)
-            request.Headers.TryAddWithoutValidation("Accept", "application/json");
     }
 
     private async Task<byte[]> PerformViaWebViewAsync(
         Uri url, string method, byte[]? body, string? contentType, bool needsCsrf)
     {
+        var origin = CurrentBaseUrl.AbsoluteUri.TrimEnd('/');
         var headers = new Dictionary<string, string>
         {
-            ["Accept"] = "application/json",
+            ["Accept"] = CookieSessionBridge.AcceptJson,
+            ["Accept-Language"] = CookieSessionBridge.AcceptLanguage,
+            ["User-Agent"] = CookieSessionBridge.UserAgent,
             ["X-Requested-With"] = "XMLHttpRequest",
             ["Discourse-Present"] = "true",
-            ["Referer"] = CurrentBaseUrl.AbsoluteUri.TrimEnd('/') + "/",
-            ["Origin"] = CurrentBaseUrl.AbsoluteUri.TrimEnd('/')
+            ["Referer"] = origin + "/",
+            ["Origin"] = origin,
+            ["sec-ch-ua"] = CookieSessionBridge.SecChUa,
+            ["sec-ch-ua-mobile"] = CookieSessionBridge.SecChUaMobile,
+            ["sec-ch-ua-platform"] = CookieSessionBridge.SecChUaPlatform,
+            ["Sec-Fetch-Site"] = "same-origin",
+            ["Sec-Fetch-Mode"] = "cors",
+            ["Sec-Fetch-Dest"] = "empty",
+            ["Cache-Control"] = "no-cache",
+            ["Pragma"] = "no-cache"
         };
         if (contentType is not null) headers["Content-Type"] = contentType;
 

@@ -34,18 +34,45 @@ public partial class UserSessionStore : ObservableObject
             var saved = AuthService.Shared.LoadSession();
             if (saved is not null)
             {
-                Session = saved;
+                // Disk session is a hint only — must re-validate against live cookies.
+                // Logs showed saved Session + no _t cookie → IsLoggedIn true → timings 403 spam.
                 if (saved.Method == AuthMethod.UserApiKey)
+                {
+                    Session = saved;
                     DiscourseAPI.Shared.SetCredentials(saved.ApiKey, saved.ClientId);
+                    await RefreshCurrentUserAsync();
+                    if (CurrentUser is not null)
+                        StartBadgePolling();
+                    else
+                    {
+                        AppLog.Auth("Saved User API session invalid — clearing");
+                        await ClearLocalSessionAsync();
+                    }
+                }
                 else
                 {
                     DiscourseAPI.Shared.SetCredentials(null, null);
                     await DiscourseAPI.Shared.AdoptWebCookiesAsync(force: true, invalidateCsrf: true);
+                    if (!CookieSessionBridge.HasLoginCookie(baseUrl))
+                    {
+                        AppLog.Auth("Saved cookie session but no _t/_forum_session — treating as logged out");
+                        await ClearLocalSessionAsync();
+                    }
+                    else
+                    {
+                        Session = saved;
+                        await RefreshCurrentUserAsync();
+                        if (CurrentUser is not null)
+                            StartBadgePolling();
+                        else
+                        {
+                            AppLog.Auth("Cookie session present but current.json failed — clearing disk session");
+                            await ClearLocalSessionAsync();
+                        }
+                    }
                 }
-                await RefreshCurrentUserAsync();
-                StartBadgePolling();
             }
-            else if (CookieSessionBridge.HasSessionCookie(baseUrl))
+            else if (CookieSessionBridge.HasLoginCookie(baseUrl))
             {
                 await DiscourseAPI.Shared.AdoptWebCookiesAsync(force: true, invalidateCsrf: true);
                 try
@@ -209,6 +236,17 @@ public partial class UserSessionStore : ObservableObject
         DiscourseAPI.Shared.ResetHttpClient();
     }
 
+    /// <summary>Drop disk/UI session without wiping WebView CF cookies.</summary>
+    private Task ClearLocalSessionAsync()
+    {
+        StopBadgePolling();
+        try { AuthService.Shared.ClearSession(); } catch { /* ignore */ }
+        Session = null;
+        CurrentUser = null;
+        DiscourseAPI.Shared.ClearCredentials();
+        return Task.CompletedTask;
+    }
+
     public async Task RefreshCurrentUserAsync()
     {
         try
@@ -243,20 +281,25 @@ public partial class UserSessionStore : ObservableObject
         return false;
     }
 
-    public void StartBadgePolling(double intervalSeconds = 120)
+    public void StartBadgePolling(double intervalSeconds = 180)
     {
         StopBadgePolling();
         if (!IsLoggedIn) return;
+        // Prefer MessageBus for live badges; HTTP reconcile is a slow safety net only.
         StartMessageBus();
         _pollCts = new CancellationTokenSource();
         var token = _pollCts.Token;
+        var interval = Math.Max(120, intervalSeconds);
         _ = Task.Run(async () =>
         {
             while (!token.IsCancellationRequested)
             {
-                try { await Task.Delay(TimeSpan.FromSeconds(intervalSeconds), token); }
+                try { await Task.Delay(TimeSpan.FromSeconds(interval), token); }
                 catch { break; }
                 if (token.IsCancellationRequested) break;
+                // Skip reconcile while CF challenge is open / API paused.
+                if (SiteAccessStore.Current.NeedsChallenge || ApiResponseCache.IsPaused)
+                    continue;
                 await RefreshCurrentUserAsync();
             }
         }, token);

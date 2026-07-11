@@ -61,24 +61,41 @@ public sealed partial class MainPage : Page
         if (_initialized) return;
         _initialized = true;
 
+        SiteAccessStore.Current.BindDispatcher(DispatcherQueue);
+
         try
         {
             WebViewAPIClient.Shared.Attach(BridgeWebView);
             await WebViewAPIClient.Shared.EnsureInitializedAsync();
-            CookieSessionBridge.PrimeUserAgent();
+            // After WebView2 pins the real navigator.userAgent, refresh HttpClient defaults
+            // so CF sees the same UA on HttpClient + WebView (cf_clearance binding).
+            DiscourseAPI.Shared.ResetHttpClient();
+            AppLog.Network("UA: " + CookieSessionBridge.UserAgent);
+            AppLog.Info("app", "Log file: " + AppLog.CurrentLogFile);
         }
         catch (Exception ex)
         {
             AppLog.Warning("webview", "Bridge init: " + ex.Message);
+            CookieSessionBridge.PrimeUserAgent();
         }
 
         await DiscourseAPI.Shared.UpdateBaseUrlAsync(AppSettings.Current.BaseUrl);
         SettingsPage.ApplyTheme(AppSettings.Current.Appearance);
 
-        // Don't block first navigation on categories (can hang under CF).
-        // Warm WebView + restore session in background; navigate immediately.
-        _ = WebViewAPIClient.Shared.EnsureWarmAsync(AppSettings.Current.BaseUrl, 3);
-        _ = CategoryStore.Current.LoadAsync();
+        // Mac-style startup: warm WebView first, then restore session.
+        // Do NOT fire categories + session + latest in parallel — that is the CF stampede.
+        try
+        {
+            await WebViewAPIClient.Shared.EnsureWarmAsync(AppSettings.Current.BaseUrl, 6);
+            await CookieSessionBridge.SyncWebViewCookiesToHttpAsync(AppSettings.Current.BaseUrl, force: true);
+            // Enable WebView as fallback only — do not force WebView-first (status=0 storm).
+            if (CookieSessionBridge.HasCloudflareClearance(AppSettings.Current.BaseUrl))
+                DiscourseAPI.Shared.PreferWebViewFirst(TimeSpan.FromMinutes(10));
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warning("webview", "startup warm: " + ex.Message);
+        }
 
         try
         {
@@ -92,6 +109,9 @@ public sealed partial class MainPage : Page
         UpdateAccountFooter();
         UpdateBadges();
         NavigateToRoute(AppRouter.Current.Route, isRoot: true);
+
+        // Categories after first paint / session — lower priority, cached long.
+        _ = CategoryStore.Current.LoadAsync();
 
         // Clipboard topic-link watch when window is activated
         if (App.Window is not null)
@@ -176,13 +196,21 @@ public sealed partial class MainPage : Page
         if (e.PropertyName == nameof(SiteAccessStore.NeedsChallenge) &&
             SiteAccessStore.Current.NeedsChallenge)
         {
+            // Auto-open challenge sheet as soon as API layer reports CF block.
             DispatcherQueue.TryEnqueue(async () => await ShowChallengeAsync());
         }
     }
 
     private void OnApiError(Exception ex)
     {
-        DispatcherQueue.TryEnqueue(() => SiteAccessStore.Current.HandleApiError(ex));
+        // PresentChallenge → NeedsChallenge=true → PropertyChanged → ShowChallengeAsync
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            SiteAccessStore.Current.HandleApiError(ex);
+            // Belt-and-suspenders: if flag already true but dialog not open, open now.
+            if (SiteAccessStore.Current.NeedsChallenge && !_challengeDialogOpen)
+                _ = ShowChallengeAsync();
+        });
     }
 
     private void NavigateToRoute(AppRoute route, bool isRoot)
@@ -449,6 +477,12 @@ public sealed partial class MainPage : Page
     private void Refresh_Click(object sender, RoutedEventArgs e)
         => AppEvents.RaiseRefresh();
 
+    private void NavView_PaneClosing(NavigationView sender, NavigationViewPaneClosingEventArgs args)
+        => AccountButton.Visibility = Visibility.Collapsed;
+
+    private void NavView_PaneOpening(NavigationView sender, object args)
+        => AccountButton.Visibility = Visibility.Visible;
+
     private void AccountButton_Click(object sender, RoutedEventArgs e)
     {
         if (UserSessionStore.Current.IsLoggedIn)
@@ -557,6 +591,28 @@ public sealed partial class MainPage : Page
         }
     }
 
+    /// <summary>
+    /// Raise default ~548 MaxWidth modestly. Page layout is fitted inside WebView via CSS.
+    /// </summary>
+    private static void ApplyWideDialogSize(ContentDialog dialog)
+    {
+        try
+        {
+            double w = 780;
+            if (App.Window?.Bounds is { Width: > 0 } b)
+                w = Math.Clamp(b.Width * 0.72, 700, 900);
+            dialog.MinWidth = w;
+            dialog.MaxWidth = 960;
+            dialog.Width = w;
+        }
+        catch
+        {
+            dialog.MinWidth = 760;
+            dialog.MaxWidth = 960;
+            dialog.Width = 780;
+        }
+    }
+
     private async Task ShowAuthAsync()
     {
         if (_authDialogOpen) return;
@@ -564,6 +620,7 @@ public sealed partial class MainPage : Page
         try
         {
             var dialog = new AuthDialog { XamlRoot = XamlRoot };
+            ApplyWideDialogSize(dialog);
             await dialog.ShowAsync();
         }
         finally
@@ -578,18 +635,25 @@ public sealed partial class MainPage : Page
     private async Task ShowChallengeAsync()
     {
         if (_challengeDialogOpen) return;
+        if (XamlRoot is null) return;
         _challengeDialogOpen = true;
         try
         {
             var dialog = new SiteChallengeDialog { XamlRoot = XamlRoot };
+            ApplyWideDialogSize(dialog);
             await dialog.ShowAsync();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warning("challenge", "dialog: " + ex.Message);
         }
         finally
         {
             _challengeDialogOpen = false;
-            // Always refresh after challenge dialog closes (success or force-continue).
+            // Soft: SiteAccessStore already schedules a delayed refresh after clear.
+            // Immediate double-refresh here was re-tripping CF (request stampede).
             UpdateAccountFooter();
-            AppEvents.RaiseRefresh();
+            UpdateBadges();
         }
     }
 

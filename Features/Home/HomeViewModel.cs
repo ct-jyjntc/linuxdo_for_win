@@ -146,8 +146,34 @@ public partial class HomeViewModel : ObservableObject
         var generation = ++_loadGeneration;
         try
         {
-            var response = await FetchPageAsync(0);
+            // One soft UI-level retry: rapid refresh can race WebView warm / cookie sync.
+            TopicListResponse? response = null;
+            Exception? last = null;
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                if (generation != _loadGeneration) return;
+                try
+                {
+                    if (attempt > 0)
+                        await Task.Delay(400);
+                    response = await FetchPageAsync(0);
+                    last = null;
+                    break;
+                }
+                catch (Exception ex) when (attempt == 0 && IsSoftNetworkFailure(ex))
+                {
+                    last = ex;
+                    AppLog.Warning("home", "load soft-retry: " + ex.Message);
+                }
+            }
             if (generation != _loadGeneration) return;
+            if (response is null)
+            {
+                var fail = last ?? new Exception("加载失败");
+                ErrorMessage = fail.Message;
+                APIError.PostIfChallenge(fail);
+                return;
+            }
             Apply(response, append: false);
             HasMore = response.TopicList.MoreTopicsUrl is not null || response.TopicList.Topics.Count >= 30;
         }
@@ -203,7 +229,39 @@ public partial class HomeViewModel : ObservableObject
     }
 
     [RelayCommand]
-    public async Task RefreshAsync() => await LoadAsync(force: true);
+    public async Task RefreshAsync()
+    {
+        // Manual refresh: drop list cache for this mode so user gets fresh data,
+        // but keep other caches (categories/topics) to avoid a request storm.
+        ApiResponseCache.InvalidatePrefix(
+            DiscourseAPI.Shared.CurrentBaseUrl.AbsoluteUri.TrimEnd('/') + "/" + Mode switch
+            {
+                HomeMode.Top => "top",
+                HomeMode.Newest => "new",
+                _ => "latest"
+            });
+        await LoadAsync(force: true);
+    }
+
+    private static bool IsSoftNetworkFailure(Exception ex)
+    {
+        // Do not soft-retry CF / challenge — that multiplies WebView aborts (log 11:33–11:34).
+        if (ex is APIError { IsChallengeRelated: true }) return false;
+        if (ex is APIError.CloudflareChallenge) return false;
+        if (ex is APIError.Forbidden) return false;
+        if (SiteAccessStore.Current.NeedsChallenge) return false;
+
+        if (ex is APIError.Network) return true;
+        if (ex is APIError.Http { Status: 0 }) return true;
+        var m = ex.Message ?? "";
+        return m.Contains("网络请求中断", StringComparison.Ordinal) ||
+               m.Contains("HTTP 0", StringComparison.OrdinalIgnoreCase) ||
+               m.Contains("timed out", StringComparison.OrdinalIgnoreCase) ||
+               m.Contains("超时", StringComparison.Ordinal) ||
+               m.Contains("aborted", StringComparison.OrdinalIgnoreCase) ||
+               m.Contains("canceled", StringComparison.OrdinalIgnoreCase) ||
+               m.Contains("cancelled", StringComparison.OrdinalIgnoreCase);
+    }
 
     private async Task<TopicListResponse> FetchPageAsync(int page) => Mode switch
     {

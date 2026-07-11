@@ -31,8 +31,8 @@
             <ToggleSwitch x:Name="CollapseLongPostsSwitch" Header="折叠长帖" Toggled="CollapseLongPostsSwitch_Toggled" />
             <ToggleSwitch x:Name="ClipboardSwitch" Header="识别剪贴板中的主题链接" Toggled="ClipboardSwitch_Toggled" />
             <ToggleSwitch x:Name="LocalBadgesSwitch" Header="侧栏显示本地列表角标" Toggled="LocalBadgesSwitch_Toggled" />
-            <ToggleSwitch x:Name="NotifBannersSwitch" Header="系统通知横幅" Toggled="NotifBannersSwitch_Toggled" />
-            <ToggleSwitch x:Name="TrayIconSwitch" Header="显示托盘图标" Toggled="TrayIconSwitch_Toggled" />
+            <ToggleSwitch x:Name="NotifBannersSwitch" Header="系统通知（Windows 通知中心）" Toggled="NotifBannersSwitch_Toggled" />
+            <ToggleSwitch x:Name="TrayIconSwitch" Header="显示托盘图标（始终在通知区域；关闭窗口时最小化到托盘）" Toggled="TrayIconSwitch_Toggled" />
             <ToggleSwitch x:Name="AutosaveDraftsSwitch" Header="草稿自动云同步" Toggled="AutosaveDraftsSwitch_Toggled" />
 
             <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="关键词过滤" Margin="0,16,0,4" />
@@ -42,6 +42,11 @@
             <TextBox x:Name="BaseUrlBox" Header="Base URL" LostFocus="BaseUrlBox_LostFocus" />
             <Button Content="打开站点验证页" Click="Challenge_Click" Margin="0,4,0,0" />
             <Button Content="清理 HTML 缓存" Click="ClearCache_Click" Margin="0,4,0,0" />
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                <Button Content="打开诊断日志" Click="OpenLog_Click" />
+                <Button Content="复制日志路径" Click="CopyLogPath_Click" />
+            </StackPanel>
+            <TextBlock x:Name="LogPathText" Opacity="0.65" FontSize="12" TextWrapping="Wrap" IsTextSelectionEnabled="True" Margin="0,2,0,0" />
 
             <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="快捷键" Margin="0,16,0,4" />
             <TextBlock Opacity="0.7" TextWrapping="Wrap" FontSize="12"
@@ -70,6 +75,13 @@
             <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="关于" Margin="0,16,0,4" />
             <TextBlock Text="LinuxDo for Windows — 非官方客户端" Opacity="0.75" />
             <TextBlock Text="基于 Discourse REST API · WinUI 3" Opacity="0.6" FontSize="12" />
+            <TextBlock x:Name="BuildText" Opacity="0.75" Margin="0,4,0,0" IsTextSelectionEnabled="True" />
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+                <Button Content="打开 GitHub 仓库" Click="OpenRepo_Click" />
+                <Button x:Name="CheckUpdateButton" Content="检查更新" Click="CheckUpdate_Click" />
+                <ProgressRing x:Name="UpdateRing" Width="18" Height="18" IsActive="False" Visibility="Collapsed" />
+            </StackPanel>
+            <TextBlock x:Name="UpdateStatusText" Opacity="0.7" TextWrapping="Wrap" Margin="0,4,0,0" />
             <TextBlock x:Name="StatusText" Margin="0,8,0,0" Opacity="0.7" />
         </StackPanel>
     </ScrollViewer>

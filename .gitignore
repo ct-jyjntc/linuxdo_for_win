@@ -29,19 +29,25 @@ artifacts/
 *.nuget.targets
 project.lock.json
 
-# MSIX packaging output
+# Publish / package outputs (large; regenerate with Package.ps1)
+publish/
+dist/
 AppPackages/
 BundleArtifacts/
 *.msix
+*.msixbundle
 *.msixupload
 *.appx
 *.appxbundle
 *.appxupload
+*.appinstaller
 
-# Publish output
-publish/
-*.pubxml
+# Local publish profiles
+*.pubxml.user
 PublishScripts/
+
+# WinApp CLI local state
+.winapp/
 
 # Code analysis and tooling
 _ReSharper*/
@@ -49,6 +55,27 @@ _ReSharper*/
 *.dotCover
 .idea/
 
-# Generated files
+# Generated at build/package time
+Core/Utilities/BuildInfo.g.cs
 Generated\ Files/
 *_wpftmp.csproj
+
+# OS junk
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# ---------------------------------------------------------------------------
+# Code signing
+# ---------------------------------------------------------------------------
+# NEVER commit private keys (.pfx). Package.ps1 regenerates them under certs/.
+# Public .cer is also ignored in-repo by default; ship it only in GitHub Release
+# assets next to the MSIX (Install-LinuxDo.ps1 trusts LinuxDo-Signing.cer).
+#
+# Keep certs/README.md tracked (docs only).
+certs/*
+!certs/README.md
+!certs/.gitignore
+*.pfx
+*.p12
+*.key

@@ -10,20 +10,30 @@
     PrimaryButtonText="我已登录，立即检测"
     PrimaryButtonClick="DetectLogin_Click"
     DefaultButton="Primary"
-    MinWidth="720"
+    MinWidth="760"
+    MaxWidth="960"
     mc:Ignorable="d">
 
-    <Grid MinHeight="480" MinWidth="640" RowSpacing="10">
+    <!--
+      WinUI ContentDialog defaults MaxWidth≈548 — must set MaxWidth on the dialog itself
+      (not only content MinWidth) or the sheet stays narrow and clips CF/login UI.
+    -->
+    <Grid
+        x:Name="RootGrid"
+        MinHeight="600"
+        MinWidth="700"
+        RowSpacing="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" MinHeight="420" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <TextBlock
-            Text="LinuxDo 已禁用 User API Key，请直接在网页中登录。登录成功后会自动同步会话。"
+            Text="使用与接口相同的浏览器上下文登录。若页面空白，点「刷新页面」。"
             TextWrapping="Wrap"
             Opacity="0.75" />
 
@@ -32,11 +42,28 @@
             <PivotItem Header="高级" />
         </Pivot>
 
-        <Grid Grid.Row="2" x:Name="WebPane">
-            <WebView2 x:Name="LoginWebView" />
-        </Grid>
+        <StackPanel
+            Grid.Row="2"
+            x:Name="WebToolbar"
+            Orientation="Horizontal"
+            Spacing="8">
+            <Button x:Name="RefreshPageButton" Content="刷新页面" Click="RefreshPage_Click" />
+            <Button Content="打开登录页" Click="GoLogin_Click" />
+            <Button Content="后退" Click="GoBack_Click" />
+            <Button Content="缩小适配" Click="FitScale_Click" />
+        </StackPanel>
 
-        <StackPanel Grid.Row="2" x:Name="AdvancedPane" Spacing="12" Visibility="Collapsed" Padding="4">
+        <Border
+            Grid.Row="3"
+            x:Name="WebHost"
+            MinHeight="420"
+            MinWidth="0"
+            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+            BorderThickness="1"
+            CornerRadius="4" />
+
+        <StackPanel Grid.Row="3" x:Name="AdvancedPane" Spacing="12" Visibility="Collapsed" Padding="4">
             <TextBlock
                 Text="站点管理员若重新开放 User API，可使用浏览器授权或手动 Key。LinuxDo 当前通常会提示功能已禁用。"
                 TextWrapping="Wrap"
@@ -48,16 +75,7 @@
             <Button Content="使用 API Key 登录" Click="ManualLogin_Click" HorizontalAlignment="Left" />
         </StackPanel>
 
-        <TextBlock
-            Grid.Row="3"
-            x:Name="StatusText"
-            Text="在下方完成网站登录（支持 Connect / 密码 / 第三方）"
-            Opacity="0.7"
-            TextWrapping="Wrap" />
-        <TextBlock
-            Grid.Row="4"
-            x:Name="ErrorText"
-            Foreground="{ThemeResource SystemFillColorCriticalBrush}"
-            TextWrapping="Wrap" />
+        <TextBlock Grid.Row="4" x:Name="StatusText" Opacity="0.8" TextWrapping="Wrap" />
+        <TextBlock Grid.Row="5" x:Name="ErrorText" Foreground="DarkRed" TextWrapping="Wrap" />
     </Grid>
 </ContentDialog>

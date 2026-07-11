@@ -127,7 +127,9 @@ public sealed partial class ImageViewerDialog : ContentDialog
             catch
             {
                 using var http = new HttpClient();
-                http.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", CookieSessionBridge.UserAgent);
+                CookieSessionBridge.ApplyDefaultHttpClientHeaders(http);
+                try { http.DefaultRequestHeaders.Remove("Accept"); } catch { /* ignore */ }
+                http.DefaultRequestHeaders.TryAddWithoutValidation("Accept", CookieSessionBridge.AcceptImage);
                 data = await http.GetByteArrayAsync(_url);
             }
             var picker = new FileSavePicker();

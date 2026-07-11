@@ -2,8 +2,6 @@ using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using LinuxDo.Core.Models;
 using LinuxDo.Core.Utilities;
-using Windows.Storage;
-
 namespace LinuxDo.Core.Services;
 
 public partial class ReadingHistoryStore : ObservableObject
@@ -12,7 +10,7 @@ public partial class ReadingHistoryStore : ObservableObject
 
     private const string Key = "history.topics.v1";
     private const int MaxItems = 200;
-    private readonly ApplicationDataContainer _defaults = ApplicationData.Current.LocalSettings;
+    private readonly LocalKvStore _store = new("history");
 
     [ObservableProperty] private List<LocalTopicItem> _items = [];
 
@@ -22,7 +20,7 @@ public partial class ReadingHistoryStore : ObservableObject
     {
         try
         {
-            if (_defaults.Values.TryGetValue(Key, out var v) && v is string json)
+            if (_store.TryGetString(Key, out var json) && !string.IsNullOrEmpty(json))
             {
                 var list = JsonSerializer.Deserialize<List<LocalTopicItem>>(json, JsonFlexible.Options) ?? [];
                 Items = list.OrderByDescending(i => i.LastVisitedAt).ToList();
@@ -72,7 +70,7 @@ public partial class ReadingHistoryStore : ObservableObject
     {
         try
         {
-            _defaults.Values[Key] = JsonSerializer.Serialize(Items, JsonFlexible.Options);
+            _store.SetString(Key, JsonSerializer.Serialize(Items, JsonFlexible.Options));
         }
         catch (Exception ex)
         {

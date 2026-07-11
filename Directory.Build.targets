@@ -1,0 +1,12 @@
+<Project>
+  <Target Name="GenerateLinuxDoBuildInfo" BeforeTargets="BeforeCompile;CoreCompile">
+    <PropertyGroup>
+      <_BuildInfoFile>$(MSBuildProjectDirectory)\Core\Utilities\BuildInfo.g.cs</_BuildInfoFile>
+      <_WriteBuildInfoScript>$(MSBuildProjectDirectory)\scripts\Write-BuildInfo.ps1</_WriteBuildInfoScript>
+      <_BuildStamp Condition="'$(LinuxDoPackageBuildId)' != ''">$(LinuxDoPackageBuildId)</_BuildStamp>
+      <_BuildStamp Condition="'$(LinuxDoPackageBuildId)' == ''">$([System.DateTime]::Now.ToString("yyyyMMdd-HHmmss"))</_BuildStamp>
+    </PropertyGroup>
+
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(_WriteBuildInfoScript)&quot; -OutFile &quot;$(_BuildInfoFile)&quot; -BuildId &quot;$(_BuildStamp)&quot;" />
+  </Target>
+</Project>

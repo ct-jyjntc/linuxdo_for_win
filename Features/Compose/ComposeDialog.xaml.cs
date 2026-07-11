@@ -90,6 +90,7 @@ public sealed partial class ComposeDialog : ContentDialog
         StatusText.Text = "发布中…";
         try
         {
+            // Force cookie + fresh CSRF every publish attempt (cookie sessions go stale after CF).
             await DiscourseAPI.Shared.PrepareWriteSessionAsync();
             var body = BodyBox.Text ?? "";
             if (string.IsNullOrWhiteSpace(body))

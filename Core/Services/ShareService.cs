@@ -99,11 +99,26 @@ public static class ShareService
             var deferral = request.GetDeferral();
             try
             {
-                var folder = ApplicationData.Current.TemporaryFolder;
-                var file = await folder.CreateFileAsync(
-                    $"linuxdo-share-{DateTimeOffset.Now.ToUnixTimeSeconds()}.png",
-                    CreationCollisionOption.ReplaceExisting);
-                await FileIO.WriteBytesAsync(file, _pendingPng);
+                StorageFile file;
+                try
+                {
+                    var folder = ApplicationData.Current.TemporaryFolder;
+                    file = await folder.CreateFileAsync(
+                        $"linuxdo-share-{DateTimeOffset.Now.ToUnixTimeSeconds()}.png",
+                        CreationCollisionOption.ReplaceExisting);
+                    await FileIO.WriteBytesAsync(file, _pendingPng);
+                }
+                catch
+                {
+                    // Unpackaged: ApplicationData may be unavailable.
+                    var dir = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "LinuxDo", "share-temp");
+                    Directory.CreateDirectory(dir);
+                    var path = Path.Combine(dir, $"linuxdo-share-{DateTimeOffset.Now.ToUnixTimeSeconds()}.png");
+                    await File.WriteAllBytesAsync(path, _pendingPng!);
+                    file = await StorageFile.GetFileFromPathAsync(path);
+                }
                 request.Data.SetStorageItems(new[] { file });
                 request.Data.Properties.Description = "分享图片";
             }

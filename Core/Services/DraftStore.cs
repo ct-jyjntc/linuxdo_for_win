@@ -2,8 +2,6 @@ using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using LinuxDo.Core.Models;
 using LinuxDo.Core.Utilities;
-using Windows.Storage;
-
 namespace LinuxDo.Core.Services;
 
 public partial class DraftStore : ObservableObject
@@ -11,7 +9,7 @@ public partial class DraftStore : ObservableObject
     public static DraftStore Current { get; } = new();
 
     private const string Key = "drafts.v1";
-    private readonly ApplicationDataContainer _defaults = ApplicationData.Current.LocalSettings;
+    private readonly LocalKvStore _store = new("drafts");
 
     [ObservableProperty] private List<ComposeDraft> _drafts = [];
     [ObservableProperty] private bool _isSyncingServer;
@@ -22,7 +20,7 @@ public partial class DraftStore : ObservableObject
     {
         try
         {
-            if (_defaults.Values.TryGetValue(Key, out var v) && v is string json)
+            if (_store.TryGetString(Key, out var json) && !string.IsNullOrEmpty(json))
             {
                 var list = JsonSerializer.Deserialize<List<ComposeDraft>>(json, JsonFlexible.Options) ?? [];
                 Drafts = list.OrderByDescending(d => d.UpdatedAt).ToList();
@@ -180,7 +178,7 @@ public partial class DraftStore : ObservableObject
     {
         try
         {
-            _defaults.Values[Key] = JsonSerializer.Serialize(Drafts, JsonFlexible.Options);
+            _store.SetString(Key, JsonSerializer.Serialize(Drafts, JsonFlexible.Options));
         }
         catch (Exception ex)
         {

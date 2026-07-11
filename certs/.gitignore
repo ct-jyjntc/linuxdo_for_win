@@ -1,0 +1,4 @@
+# Private keys only (public .cer policy is controlled by root .gitignore)
+*.pfx
+*.p12
+*.key

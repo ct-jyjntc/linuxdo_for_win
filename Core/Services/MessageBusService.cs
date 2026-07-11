@@ -24,10 +24,28 @@ public sealed class MessageBusService
     private Uri _baseUrl = new("https://linux.do");
     private Action<IReadOnlyList<Message>>? _handler;
     private int _failureCount;
+    private DateTime _pausedUntilUtc = DateTime.MinValue;
 
     public void Configure(Uri baseUrl) => _baseUrl = baseUrl;
 
     public void SetHandler(Action<IReadOnlyList<Message>>? handler) => _handler = handler;
+
+    /// <summary>Pause long-poll while CF challenge is open (avoids tight-loop 403s).</summary>
+    public void Pause(TimeSpan duration)
+    {
+        lock (_gate)
+        {
+            var until = DateTime.UtcNow + duration;
+            if (until > _pausedUntilUtc) _pausedUntilUtc = until;
+        }
+        AppLog.Network($"MessageBus paused {duration.TotalSeconds:0}s");
+    }
+
+    public void Resume()
+    {
+        lock (_gate) _pausedUntilUtc = DateTime.MinValue;
+        AppLog.Network("MessageBus resumed");
+    }
 
     public void Subscribe(string channel, int lastMessageId = -1)
     {
@@ -81,10 +99,20 @@ public sealed class MessageBusService
         while (!token.IsCancellationRequested)
         {
             Dictionary<string, int> snap;
+            DateTime pausedUntil;
             lock (_gate)
             {
                 if (_subscriptions.Count == 0) break;
                 snap = new Dictionary<string, int>(_subscriptions);
+                pausedUntil = _pausedUntilUtc;
+            }
+
+            // While CF challenge is open, do not hammer /message-bus.
+            if (DateTime.UtcNow < pausedUntil || ApiResponseCache.IsPaused)
+            {
+                try { await Task.Delay(TimeSpan.FromSeconds(5), token); }
+                catch { break; }
+                continue;
             }
 
             try
@@ -122,6 +150,12 @@ public sealed class MessageBusService
                     }
                     _failureCount = 0;
                 }
+                else
+                {
+                    // Idle long-poll returned empty quickly — small breathing room.
+                    try { await Task.Delay(TimeSpan.FromMilliseconds(400), token); }
+                    catch { break; }
+                }
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
@@ -131,7 +165,24 @@ public sealed class MessageBusService
             {
                 _failureCount++;
                 AppLog.Warning("messagebus", ex.Message);
-                var delay = Math.Min(30, 2 * _failureCount);
+                // On CF / 403 / 404 / rate limit, back off hard and pause a bit.
+                // Logs showed poll HTTP 404 every few seconds after login — was burning requests.
+                var msg = ex.Message ?? "";
+                if (msg.Contains("403", StringComparison.Ordinal) ||
+                    msg.Contains("404", StringComparison.Ordinal) ||
+                    msg.Contains("503", StringComparison.Ordinal) ||
+                    msg.Contains("rate", StringComparison.OrdinalIgnoreCase) ||
+                    msg.Contains("challenge", StringComparison.OrdinalIgnoreCase))
+                {
+                    // 404 often means session/channel not ready yet — long pause, don't spam.
+                    var pauseMin = msg.Contains("404", StringComparison.Ordinal) ? 5 : 2;
+                    Pause(TimeSpan.FromMinutes(pauseMin));
+                    if (!msg.Contains("404", StringComparison.Ordinal))
+                        ApiResponseCache.Pause(TimeSpan.FromMinutes(2));
+                }
+                var delay = msg.Contains("404", StringComparison.Ordinal)
+                    ? Math.Min(120, 15 * _failureCount)
+                    : Math.Min(45, 3 * _failureCount);
                 try { await Task.Delay(TimeSpan.FromSeconds(delay), token); }
                 catch { break; }
             }
@@ -144,29 +195,38 @@ public sealed class MessageBusService
         var pairs = subs.Select(kv =>
             $"{Uri.EscapeDataString(kv.Key)}={kv.Value}");
         // Discourse also wants __seq / dlp optional; minimal is fine
+        // Discourse message-bus expects channels as form fields; include __seq for some versions.
         var body = string.Join("&", pairs);
-        var url = new Uri(_baseUrl, $"/message-bus/{_clientId}/poll");
+        if (!string.IsNullOrEmpty(body)) body += "&";
+        body += "__seq=0";
+
+        // Prefer relative combine without double-slash issues.
+        var baseStr = _baseUrl.AbsoluteUri.TrimEnd('/');
+        var url = new Uri($"{baseStr}/message-bus/{_clientId}/poll?dlp=t");
 
         using var request = new HttpRequestMessage(HttpMethod.Post, url)
         {
             Content = new StringContent(body, Encoding.UTF8, "application/x-www-form-urlencoded")
         };
-        request.Headers.TryAddWithoutValidation("User-Agent", CookieSessionBridge.UserAgent);
+        CookieSessionBridge.ApplyBrowserHeaders(request, pageUrl: _baseUrl, acceptJson: true);
         request.Headers.TryAddWithoutValidation("X-Requested-With", "XMLHttpRequest");
-        request.Headers.TryAddWithoutValidation("Accept", "application/json");
-        request.Headers.TryAddWithoutValidation("Referer", _baseUrl.AbsoluteUri.TrimEnd('/') + "/");
+        request.Headers.TryAddWithoutValidation("Discourse-Present", "true");
 
         // Use shared cookie jar via a short-lived client
         using var handler = CookieSessionBridge.CreateHandler();
         using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(45) };
+        CookieSessionBridge.ApplyDefaultHttpClientHeaders(http);
         using var response = await http.SendAsync(request, token);
         var data = await response.Content.ReadAsByteArrayAsync(token);
 
         if (!response.IsSuccessStatusCode)
         {
-            if ((int)response.StatusCode == 429)
-                throw new Exception("rate limited");
-            throw new Exception($"poll HTTP {(int)response.StatusCode}");
+            var code = (int)response.StatusCode;
+            if (code == 429) throw new Exception("rate limited");
+            // CF sometimes returns 403 HTML; treat as challenge-ish for backoff.
+            if (code is 403 or 503 && ResponseInspector.LooksLikeCloudflare(data, code))
+                throw new Exception("challenge poll blocked");
+            throw new Exception($"poll HTTP {code}");
         }
 
         if (!ResponseInspector.IsProbablyJson(data))

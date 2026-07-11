@@ -18,9 +18,12 @@ public sealed class ImageLoader
     private readonly HttpClient _http;
     private readonly ConcurrentDictionary<string, BitmapImage> _memory = new();
     private readonly ConcurrentDictionary<string, Task<BitmapImage?>> _inflight = new();
+    private readonly SemaphoreSlim _netGate = new(1, 1); // serial image downloads under CF
     private readonly string _diskDir;
     private const int MaxMemoryEntries = 300;
     private const long MaxDiskBytes = 200L * 1024 * 1024;
+    private DateTime _pausedUntilUtc = DateTime.MinValue;
+    private int _recent429;
 
     private ImageLoader()
     {
@@ -28,10 +31,10 @@ public sealed class ImageLoader
         {
             Timeout = TimeSpan.FromSeconds(25)
         };
-        _http.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", CookieSessionBridge.UserAgent);
-        // Prefer formats WinUI BitmapImage can decode (avoid avif-first which often fails)
-        _http.DefaultRequestHeaders.TryAddWithoutValidation(
-            "Accept", "image/png,image/jpeg,image/webp,image/gif,image/*;q=0.8,*/*;q=0.5");
+        CookieSessionBridge.ApplyDefaultHttpClientHeaders(_http);
+        try { _http.DefaultRequestHeaders.Remove("Accept"); } catch { /* ignore */ }
+        // Prefer formats WinUI BitmapImage can decode
+        _http.DefaultRequestHeaders.TryAddWithoutValidation("Accept", CookieSessionBridge.AcceptImage);
 
         var root = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -39,6 +42,14 @@ public sealed class ImageLoader
         Directory.CreateDirectory(root);
         _diskDir = root;
     }
+
+    public void Pause(TimeSpan duration)
+    {
+        var until = DateTime.UtcNow + duration;
+        if (until > _pausedUntilUtc) _pausedUntilUtc = until;
+    }
+
+    public void Resume() => _pausedUntilUtc = DateTime.MinValue;
 
     public BitmapImage? Cached(string? url)
     {
@@ -134,47 +145,78 @@ public sealed class ImageLoader
             }
         }
 
+        // Don't pile on image downloads while CF is blocking API traffic.
+        if (DateTime.UtcNow < _pausedUntilUtc || ApiResponseCache.IsPaused || SiteAccessStore.Current.NeedsChallenge)
+            return null;
+
         var attempts = Math.Max(1, retries + 1);
         Exception? last = null;
         for (var i = 0; i < attempts; i++)
         {
             try
             {
-                using var req = new HttpRequestMessage(HttpMethod.Get, uri);
-                req.Headers.TryAddWithoutValidation("User-Agent", CookieSessionBridge.UserAgent);
-                if (!string.IsNullOrEmpty(uri.Host))
-                    req.Headers.TryAddWithoutValidation("Referer", $"https://{uri.Host}/");
+                if (DateTime.UtcNow < _pausedUntilUtc || ApiResponseCache.IsPaused || SiteAccessStore.Current.NeedsChallenge)
+                    return null;
 
-                using var resp = await _http.SendAsync(req);
-                if ((int)resp.StatusCode is 403 or 503)
-                {
-                    if (i == 0)
-                    {
-                        try
-                        {
-                            await CookieSessionBridge.SyncWebViewCookiesToHttpAsync(
-                                new Uri($"https://{uri.Host}"), force: true);
-                        }
-                        catch { /* ignore */ }
-                    }
-                    resp.EnsureSuccessStatusCode();
-                }
-
-                resp.EnsureSuccessStatusCode();
-                var data = await resp.Content.ReadAsByteArrayAsync();
-                if (data.Length == 0) return null;
-
-                // Persist raw bytes
+                await _netGate.WaitAsync();
                 try
                 {
-                    await File.WriteAllBytesAsync(diskPath, data);
-                    _ = Task.Run(TrimDiskIfNeeded);
-                }
-                catch { /* ignore disk errors */ }
+                    // Re-check after waiting for the gate — many tasks pile up then all 429.
+                    if (DateTime.UtcNow < _pausedUntilUtc || SiteAccessStore.Current.NeedsChallenge)
+                        return null;
 
-                var bmp = await BitmapFromBytesAsync(data);
-                if (bmp is not null) StoreMemory(key, bmp);
-                return bmp;
+                    using var req = new HttpRequestMessage(HttpMethod.Get, uri);
+                    var page = !string.IsNullOrEmpty(uri.Host)
+                        ? new Uri($"https://{uri.Host}/")
+                        : null;
+                    CookieSessionBridge.ApplyBrowserHeaders(
+                        req,
+                        pageUrl: page,
+                        acceptJson: false,
+                        fetchSite: "same-origin",
+                        fetchMode: "no-cors",
+                        fetchDest: "image");
+                    try { req.Headers.Remove("Accept"); } catch { /* ignore */ }
+                    req.Headers.TryAddWithoutValidation("Accept", CookieSessionBridge.AcceptImage);
+
+                    using var resp = await _http.SendAsync(req);
+                    if ((int)resp.StatusCode == 429)
+                    {
+                        var n = Interlocked.Increment(ref _recent429);
+                        var pauseSec = n >= 3 ? 90 : 45;
+                        Pause(TimeSpan.FromSeconds(pauseSec));
+                        // Log once per pause window
+                        if (n == 1 || n == 3)
+                            AppLog.Warning("image", $"429 Too Many Requests — pause image loads {pauseSec}s");
+                        return null;
+                    }
+                    if ((int)resp.StatusCode is 403 or 503)
+                    {
+                        Pause(TimeSpan.FromSeconds(30));
+                        return null;
+                    }
+
+                    Interlocked.Exchange(ref _recent429, 0);
+                    resp.EnsureSuccessStatusCode();
+                    var data = await resp.Content.ReadAsByteArrayAsync();
+                    if (data.Length == 0) return null;
+
+                    // Persist raw bytes
+                    try
+                    {
+                        await File.WriteAllBytesAsync(diskPath, data);
+                        _ = Task.Run(TrimDiskIfNeeded);
+                    }
+                    catch { /* ignore disk errors */ }
+
+                    var bmp = await BitmapFromBytesAsync(data);
+                    if (bmp is not null) StoreMemory(key, bmp);
+                    return bmp;
+                }
+                finally
+                {
+                    _netGate.Release();
+                }
             }
             catch (Exception ex)
             {

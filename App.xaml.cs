@@ -27,9 +27,24 @@ public partial class App : Application
 
     protected override void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
     {
-        Window = new MainWindow();
-        DispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
-        SystemToast.EnsureRegistered();
+        try
+        {
+            Window = new MainWindow();
+            DispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("app", "MainWindow create failed: " + ex);
+            throw;
+        }
+
+        // Defer toast registration — unpackaged builds may throw COM errors here.
+        // Do not block / crash startup if notifications fail.
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            try { SystemToast.EnsureRegistered(); }
+            catch (Exception ex) { AppLog.Warning("toast", "deferred register: " + ex.Message); }
+        });
 
         // Protocol activation (linuxdo://...)
         try
@@ -47,7 +62,14 @@ public partial class App : Application
             AppLog.Warning("app", "protocol: " + ex.Message);
         }
 
-        Window.Activate();
+        try
+        {
+            Window.Activate();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("app", "Activate failed: " + ex.Message);
+        }
     }
 
     public static void HandleProtocol(Uri uri)

@@ -10,6 +10,12 @@
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>
 
+            <!-- Modest raise over default ~548; login/CF pages self-fit via WebView CSS. -->
+            <Style TargetType="ContentDialog" BasedOn="{StaticResource DefaultContentDialogStyle}">
+                <Setter Property="MinWidth" Value="720" />
+                <Setter Property="MaxWidth" Value="960" />
+            </Style>
+
             <controls:NullToCollapsedConverter x:Key="NullToCollapsedConverter" />
             <controls:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
             <controls:StringToBoolConverter x:Key="StringToBoolConverter" />

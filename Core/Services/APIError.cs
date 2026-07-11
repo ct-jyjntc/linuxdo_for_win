@@ -24,12 +24,24 @@ public abstract class APIError : Exception
         public string? BodyMessage { get; }
 
         public Http(int status, string? message)
-            : base(string.IsNullOrEmpty(message)
-                ? $"请求失败（HTTP {status}）"
-                : $"请求失败（{status}）：{message}")
+            : base(FormatMessage(status, message))
         {
             Status = status;
             BodyMessage = message;
+        }
+
+        private static string FormatMessage(int status, string? message)
+        {
+            // status 0 is not a real HTTP code — browser/WebView transport failure.
+            if (status == 0)
+            {
+                return string.IsNullOrEmpty(message)
+                    ? "网络请求中断，请稍后重试"
+                    : $"网络请求中断：{message}";
+            }
+            return string.IsNullOrEmpty(message)
+                ? $"请求失败（HTTP {status}）"
+                : $"请求失败（{status}）：{message}";
         }
 
         public override bool IsChallengeRelated
@@ -51,7 +63,7 @@ public abstract class APIError : Exception
 
     public sealed class Forbidden : APIError
     {
-        public Forbidden() : base("没有权限执行此操作") { }
+        public Forbidden() : base("没有权限执行此操作（可能未登录、CSRF 失效，或需要重新完成站点验证）") { }
     }
 
     public sealed class RateLimited : APIError
@@ -66,7 +78,28 @@ public abstract class APIError : Exception
 
     public sealed class Network : APIError
     {
-        public Network(Exception inner) : base(inner.Message) { }
+        public Network(Exception inner)
+            : base(string.IsNullOrWhiteSpace(inner.Message)
+                ? "网络请求失败，请检查网络后重试"
+                : NormalizeNetworkMessage(inner.Message))
+        {
+        }
+
+        private static string NormalizeNetworkMessage(string message)
+        {
+            if (message.Contains("HTTP 0", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("status 0", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("status=0", StringComparison.OrdinalIgnoreCase))
+                return "网络请求中断，请稍后重试";
+            if (message.Contains("WebView fetch timed out", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("timed out after", StringComparison.OrdinalIgnoreCase))
+                return "请求超时（页面通道繁忙或站点较慢），请稍后再试";
+            if (message.Contains("canceled", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("cancelled", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("aborted", StringComparison.OrdinalIgnoreCase))
+                return "请求超时或被中断，请稍后再试";
+            return message;
+        }
     }
 
     public sealed class MissingAuth : APIError

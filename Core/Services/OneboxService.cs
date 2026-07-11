@@ -26,8 +26,8 @@ public sealed partial class OneboxService
     {
         _forumHttp = CookieSessionBridge.CreateHttpClient();
         _forumHttp.Timeout = TimeSpan.FromSeconds(12);
-        _forumHttp.DefaultRequestHeaders.Remove("Accept");
-        _forumHttp.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "text/html");
+        try { _forumHttp.DefaultRequestHeaders.Remove("Accept"); } catch { /* ignore */ }
+        _forumHttp.DefaultRequestHeaders.TryAddWithoutValidation("Accept", CookieSessionBridge.AcceptHtml);
 
         _ogHttp = new HttpClient(new HttpClientHandler
         {
@@ -37,8 +37,9 @@ public sealed partial class OneboxService
         {
             Timeout = TimeSpan.FromSeconds(8)
         };
-        _ogHttp.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", CookieSessionBridge.UserAgent);
-        _ogHttp.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "text/html");
+        CookieSessionBridge.ApplyDefaultHttpClientHeaders(_ogHttp);
+        try { _ogHttp.DefaultRequestHeaders.Remove("Accept"); } catch { /* ignore */ }
+        _ogHttp.DefaultRequestHeaders.TryAddWithoutValidation("Accept", CookieSessionBridge.AcceptHtml);
     }
 
     public LinkPreview? Cached(Uri url)
@@ -92,7 +93,15 @@ public sealed partial class OneboxService
             var baseUrl = DiscourseAPI.Shared.CurrentBaseUrl;
             var endpoint = new Uri($"{baseUrl.AbsoluteUri.TrimEnd('/')}/onebox?url={Uri.EscapeDataString(url.AbsoluteUri)}&refresh=false");
             using var req = new HttpRequestMessage(HttpMethod.Get, endpoint);
-            req.Headers.TryAddWithoutValidation("Accept", "text/html");
+            CookieSessionBridge.ApplyBrowserHeaders(
+                req,
+                pageUrl: baseUrl,
+                acceptJson: false,
+                fetchSite: "same-origin",
+                fetchMode: "cors",
+                fetchDest: "empty");
+            try { req.Headers.Remove("Accept"); } catch { /* ignore */ }
+            req.Headers.TryAddWithoutValidation("Accept", CookieSessionBridge.AcceptHtml);
             using var resp = await _forumHttp.SendAsync(req);
             if (!resp.IsSuccessStatusCode) return null;
             var html = await resp.Content.ReadAsStringAsync();

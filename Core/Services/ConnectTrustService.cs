@@ -77,20 +77,30 @@ public static partial class ConnectTrustService
 
     private static async Task<string> FetchHtmlAsync()
     {
+        // NEVER navigate the shared forum WebView to connect.linux.do —
+        // that destroys the linux.do CF document/context (log 11:55:42 warm → connect).
         await CookieSessionBridge.SyncWebViewCookiesToHttpAsync(new Uri("https://linux.do"), force: true);
 
         try
         {
             var html = await FetchHtmlViaHttpAsync();
             if (LooksLikeTrustCard(html)) return html;
-            AppLog.Network("Connect URLSession HTML missing TL card; trying WebView extract");
+            AppLog.Network("Connect HTML missing TL card (Http only — no WebView navigate)");
+            throw new APIError.ServerMessage("未能解析 Connect 信任等级卡片（页面结构可能已变更）");
+        }
+        catch (APIError.Http httpEx) when (httpEx.Status == 429)
+        {
+            throw new APIError.RateLimited();
+        }
+        catch (APIError)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            AppLog.Warning("network", "Connect URLSession failed: " + ex.Message);
+            AppLog.Warning("network", "Connect HTTP failed: " + ex.Message);
+            throw new APIError.ServerMessage("无法加载 Connect：" + ex.Message);
         }
-
-        return await FetchHtmlViaWebViewAsync();
     }
 
     private static async Task<string> FetchHtmlViaHttpAsync()
@@ -98,46 +108,24 @@ public static partial class ConnectTrustService
         using var handler = CookieSessionBridge.CreateHandler();
         using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(25) };
         using var request = new HttpRequestMessage(HttpMethod.Get, ConnectUrl);
-        request.Headers.TryAddWithoutValidation("User-Agent", CookieSessionBridge.UserAgent);
-        request.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml");
-        request.Headers.TryAddWithoutValidation("Referer", "https://linux.do/");
+        CookieSessionBridge.ApplyBrowserHeaders(
+            request,
+            pageUrl: new Uri("https://linux.do/"),
+            acceptJson: false,
+            fetchSite: "same-site",
+            fetchMode: "navigate",
+            fetchDest: "document");
+        try { request.Headers.Remove("Accept"); } catch { /* ignore */ }
+        request.Headers.TryAddWithoutValidation("Accept", CookieSessionBridge.AcceptHtml);
+        request.Headers.TryAddWithoutValidation("Upgrade-Insecure-Requests", "1");
         using var response = await http.SendAsync(request);
         var data = await response.Content.ReadAsByteArrayAsync();
         var status = (int)response.StatusCode;
+        if (status == 429) throw new APIError.Http(429, "Connect 返回 429");
         if (status is 403 or 503) throw new APIError.CloudflareChallenge();
         if (status is < 200 or >= 400)
             throw new APIError.Http(status, $"Connect 返回 {status}");
         return Encoding.UTF8.GetString(data);
-    }
-
-    private static async Task<string> FetchHtmlViaWebViewAsync()
-    {
-        await WebViewAPIClient.Shared.EnsureInitializedAsync();
-        var data = await WebViewAPIClient.Shared.FetchAsync(
-            ConnectUrl, "GET",
-            new Dictionary<string, string> { ["Accept"] = "text/html" },
-            expectJson: false);
-        var html = Encoding.UTF8.GetString(data);
-        if (string.IsNullOrWhiteSpace(html))
-        {
-            // Navigate and extract outerHTML
-            var core = WebViewAPIClient.Shared.GetWebView()?.CoreWebView2
-                       ?? throw new APIError.ServerMessage("WebView 未初始化");
-            var tcs = new TaskCompletionSource<bool>();
-            void Handler(object s, Microsoft.Web.WebView2.Core.CoreWebView2NavigationCompletedEventArgs e)
-            {
-                core.NavigationCompleted -= Handler;
-                tcs.TrySetResult(e.IsSuccess);
-            }
-            core.NavigationCompleted += Handler;
-            WebViewAPIClient.Shared.GetWebView()!.Source = ConnectUrl;
-            await Task.WhenAny(tcs.Task, Task.Delay(15000));
-            var result = await core.ExecuteScriptAsync("document.documentElement.outerHTML");
-            html = System.Text.Json.JsonSerializer.Deserialize<string>(result) ?? "";
-        }
-        if (string.IsNullOrWhiteSpace(html))
-            throw new APIError.ServerMessage("无法读取 Connect 页面 HTML");
-        return html;
     }
 
     private static bool LooksLikeTrustCard(string html)
